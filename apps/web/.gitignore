@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# No secrets here — it documents the one variable this app needs.
+!.env.example
