@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { inject } from 'vitest';
 import type { Pool } from 'pg';
-import { createTestDatabase, type TestDatabase } from '@ticketing/testkit';
+import { createTestDatabase, startTestIdentity, type TestDatabase, type TestIdentity } from '@ticketing/testkit';
 import { loadConfig } from '../src/config.js';
 import { createPool } from '../src/db.js';
 import { buildServer, type ReservationServer } from '../src/server.js';
@@ -15,6 +15,10 @@ export interface Harness {
   pool: Pool;
   db: TestDatabase;
   baseUrl: string;
+  /** Real RS256 signer + JWKS endpoint; the service verifies against it for real. */
+  identity: TestIdentity;
+  /** Authorization header for an attendee — what a booking request needs. */
+  auth: (userId?: string) => Promise<Record<string, string>>;
   stop: () => Promise<void>;
 }
 
@@ -26,12 +30,17 @@ export interface Harness {
 export async function startHarness(options: { holdDurationSeconds?: number } = {}): Promise<Harness> {
   const adminUrl = inject('pgAdminUrl');
   const db = await createTestDatabase({ adminUrl, migrationsDir: MIGRATIONS_DIR });
+  const identity = await startTestIdentity();
 
   const config = loadConfig({
     databaseUrl: db.url,
     nodeEnv: 'test',
     logLevel: 'silent',
     holdDurationSeconds: options.holdDurationSeconds ?? 480,
+    // ADR-010 — the service verifies tokens itself against a real JWKS endpoint.
+    jwksUri: identity.jwksUri,
+    jwtIssuer: identity.issuer,
+    jwtAudience: identity.audience,
     // Enough connections that the pool is not the bottleneck the test accidentally
     // measures; Postgres is configured for 300 backends.
     pgPoolMax: 60,
@@ -40,7 +49,7 @@ export async function startHarness(options: { holdDurationSeconds?: number } = {
     janitorEnabled: false,
   });
 
-  const pool = createPool(config);
+  const pool = createPool({ databaseUrl: config.databaseUrl, max: config.pgPoolMax, statementTimeoutMs: config.statementTimeoutMs });
   const app = await buildServer({ config, pool });
   resetCounters();
 
@@ -53,6 +62,8 @@ export async function startHarness(options: { holdDurationSeconds?: number } = {
     pool,
     db,
     baseUrl: `http://127.0.0.1:${address.port}`,
+    identity,
+    auth: identity.attendee,
     stop: async () => {
       // Order matters: DROP DATABASE ... WITH FORCE terminates any surviving backend,
       // which surfaces as an uncaught 57P01 on whatever connection was still open.
@@ -60,6 +71,7 @@ export async function startHarness(options: { holdDurationSeconds?: number } = {
       await app.close();
       await pool.end();
       await db.drop();
+      await identity.stop();
     },
   };
 }
@@ -85,10 +97,6 @@ export async function seedSeats(pool: Pool, count: number): Promise<SeededEvent>
   // Ordered so tests can address "seat i" deterministically across runs.
   return { eventId, tierId, seatIds: result.rows.map((r) => r.seat_id).sort() };
 }
-
-export const userHeaders = (userId: string = randomUUID()): Record<string, string> => ({
-  'x-dev-user-id': userId,
-});
 
 /** Force a hold past its expiry without sleeping (PRD §19 forbids sleep() in tests). */
 export async function expireHold(pool: Pool, holdId: string): Promise<void> {

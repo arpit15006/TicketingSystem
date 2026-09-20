@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { randomUUID } from 'node:crypto';
 import { fireConcurrentRequests, countByStatus, latency, totalConnectRetries } from '@ticketing/testkit';
 import { startHarness, seedSeats, type Harness } from '../helpers.js';
 
@@ -39,13 +38,18 @@ describe('oversell: 1000 concurrent requests against 100 seats', () => {
     const { eventId, seatIds } = await seedSeats(harness.pool, SEAT_COUNT);
     expect(seatIds).toHaveLength(SEAT_COUNT);
 
+    // Real RS256 bearer tokens, minted before the burst so signing cost is not
+    // measured as request latency. Distinct users; allocation does not depend on
+    // who is asking, but nothing in the test should imply that it might.
+    const tokens = await Promise.all(Array.from({ length: 50 }, () => harness.auth()));
+
     const results = await fireConcurrentRequests({
       baseUrl: harness.baseUrl,
       count: REQUEST_COUNT,
       build: (index) => ({
         method: 'POST',
         path: '/reservations',
-        headers: { 'x-dev-user-id': randomUUID() },
+        headers: tokens[index % tokens.length]!,
         // 10 contenders per seat.
         body: { eventId, seatIds: [seatIds[index % SEAT_COUNT]] },
       }),
@@ -128,16 +132,17 @@ describe('oversell: 1000 concurrent requests against 100 seats', () => {
 
   it('general admission under the same contention allocates each seat once', async () => {
     const { eventId, tierId } = await seedSeats(harness.pool, SEAT_COUNT);
+    const tokens = await Promise.all(Array.from({ length: 50 }, () => harness.auth()));
 
     // The FOR UPDATE SKIP LOCKED path (PRD §8.1): 1,000 buyers asking for "any seat"
     // rather than a chosen one. Without SKIP LOCKED these serialize on one row.
     const results = await fireConcurrentRequests({
       baseUrl: harness.baseUrl,
       count: REQUEST_COUNT,
-      build: () => ({
+      build: (index) => ({
         method: 'POST',
         path: '/reservations',
-        headers: { 'x-dev-user-id': randomUUID() },
+        headers: tokens[index % tokens.length]!,
         body: { eventId, tierId, quantity: 1 },
       }),
     });

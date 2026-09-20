@@ -5,7 +5,7 @@ It sells seats for events under one defining constraint: **a seat must never be 
 under a thousand simultaneous buyers, not when a service crashes, not when Redis is down, and not
 when a payment settles after the buyer's hold has already expired.
 
-> **Build status: Phase 1 of 8 complete and verified.** This README grows one phase at a time, and
+> **Build status: Phases 1–2 of 8 complete and verified.** This README grows one phase at a time, and
 > every number in it is copied from a real command's output. Sections belonging to unbuilt phases
 > say so rather than describing something that does not exist yet.
 > Progress: [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
@@ -74,7 +74,10 @@ resulting RSTs measure macOS, not seat allocation.)
 | Expired hold never blocks a buyer | 1 | ✅ verified |
 | Partial baskets never commit | 1 | ✅ verified |
 | Finalize-after-expiry returns `410` | 1 | ✅ verified |
-| Refresh-token reuse detection | 2 | not built yet |
+| Refresh-token reuse detection | 2 | ✅ verified |
+| Resource-scoped authorization | 2 | ✅ verified |
+| Authenticated booking end to end through the gateway | 2 | ✅ verified |
+| 5,000-seat seed | 2 | ✅ verified |
 | Webhook replay ×50 → one ticket | 3 | not built yet |
 | Payment-after-expiry compensation | 3 | not built yet |
 | Kafka broker failure and recovery | 4 | not built yet |
@@ -82,12 +85,29 @@ resulting RSTs measure macOS, not seat allocation.)
 | k6 load test, real p50/p95/p99 | 7 | not built yet |
 | `requestId` traced end to end | 7 | not built yet |
 
-Full Phase 1 suite: **32 tests passing**, run four consecutive times with identical results.
+Full suite through Phase 2: **68 tests passing**, run three consecutive times with identical
+results, Phase 1's proof unchanged throughout.
 
 ```
- Test Files  7 passed (7)
-      Tests  32 passed (32)
+ Test Files  12 passed (12)
+      Tests  68 passed (68)
 ```
+
+### 1.3 A stolen refresh token is usable at most once
+
+Rotation is not the security property by itself; detection is. Every refresh consumes the
+presented token, so a token presented *after* it was rotated means either a stale client retry or
+a stolen copy. Those are indistinguishable, and only one is dangerous, so the safe reading wins:
+
+```
+client  → refresh(A) → 200, receives B        (A is now spent)
+attacker→ refresh(A) → 401 REFRESH_TOKEN_REUSED
+client  → refresh(B) → 401                    ← the whole family died with it
+other device (separate family) → refresh → 200 ← blast radius stops at the chain
+```
+
+`refresh-reuse.spec.ts` asserts every line of that, including the last one: revoking a user's
+*other* sessions would be a denial of service dressed up as security.
 
 ---
 
@@ -150,9 +170,9 @@ that decides who gets a seat.
 
 ```mermaid
 graph TD
-  web[web · Next.js<br/><i>phase 6</i>] --> gw[gateway :3000<br/><i>phase 2</i>]
-  gw --> id[identity :3001<br/><i>phase 2</i>]
-  gw --> cat[catalog :3002<br/><i>phase 2</i>]
+  web[web · Next.js<br/><i>phase 6</i>] --> gw[gateway :3000<br/><b>phase 2 ✅</b>]
+  gw --> id[identity :3001<br/><b>phase 2 ✅</b>]
+  gw --> cat[catalog :3002<br/><b>phase 2 ✅</b>]
   gw --> res[reservation :3003<br/><b>phase 1 ✅</b>]
   gw --> ord[orders :3004<br/><i>phase 3</i>]
   gw --> wr[waitingroom :3005<br/><i>phase 5</i>]
@@ -166,8 +186,8 @@ graph TD
   wr -.queue only.-> redis[(Redis<br/><i>phase 5</i>)]
   classDef done fill:#0b6,stroke:#084,color:#fff
   classDef todo fill:#eee,stroke:#999,color:#555
-  class res done
-  class web,gw,id,cat,ord,wr,notif,kafka,redis,orddb,iddb,catdb todo
+  class res,gw,id,cat,resdb,iddb,catdb done
+  class web,ord,wr,notif,kafka,redis,orddb todo
 ```
 
 `catalog` and `reservation` are separate because seatmap reads outnumber seat writes by roughly
@@ -188,6 +208,8 @@ a 5-second-stale cache, an allocation may not be stale by a millisecond ([ADR-00
 | `GET` | `/metrics` | Prometheus text, including `oversell_total` |
 | `GET` | `/healthz`, `/readyz` | Liveness and readiness |
 
+| `POST` | `/inventory/:eventId/seats` | Provision seat inventory — only reservation may create seats |
+
 Every mutating route accepts an `Idempotency-Key`. Same key + same body replays the stored response
 and creates nothing new; same key + a *different* body returns `422` rather than silently serving a
 stale result, because that combination is a client bug that should surface loudly
@@ -195,7 +217,36 @@ stale result, because that combination is a client bug that should surface loudl
 
 ---
 
-## 5. Quickstart
+## 5. Authentication and authorization
+
+Access tokens are **RS256, 10 minutes**. Refresh tokens are opaque 32-byte values, stored only as
+a SHA-256 digest, valid 14 days, and **rotated on every use** with family-wide reuse detection.
+
+The rule that matters is where the decisions are made:
+
+> **The gateway verifies the signature. It never decides what a caller may do, and it forwards no
+> identity headers at all.** Every service re-verifies the same bearer token against identity's
+> JWKS and makes its own authorization decision.
+
+A service that trusted an upstream `x-user-roles` header would be one misconfigured ingress or one
+exposed internal port away from full compromise. Two tests hold that line: one bypasses the gateway
+entirely and confirms the service still returns `401`, and one sends forged `x-user-roles` /
+`x-user-id` headers alongside a valid attendee token and confirms they buy nothing (`403`).
+
+Permissions are **resource-scoped**, never flat globals — holding `organizer` does not grant
+`event:update` on every event:
+
+| Role | Actions | Scope |
+|---|---|---|
+| `attendee` | `booking:create`, `order:read` | own resources |
+| `organizer` | `event:create`, `event:update`, `event:publish` | events they own, or an explicit `organizer:event:<id>` grant |
+| `venue_admin` | `venue:*`, `seatmap:write` | venues they administer |
+| `scanner` | `ticket:scan` | events assigned to them |
+| `platform_admin` | everything | global |
+
+---
+
+## 6. Quickstart
 
 Requires Node 22+, pnpm, and a Docker daemon for the integration tests.
 
@@ -211,11 +262,14 @@ database and the service's real migrations are run against it. Nothing about the
 mocked. Where no Docker daemon is reachable the harness falls back to an embedded **real**
 PostgreSQL 16 server, so the suite still runs against a genuine database rather than a fake.
 
-`docker compose up` arrives with Phase 7, per the build order in [`PRD.md`](PRD.md) §16.
+`docker compose up` arrives with Phase 7, per the build order in [`PRD.md`](PRD.md) §16. Once the
+services are running, `pnpm seed` creates a demo organizer, a venue, and an on-sale event with
+**5,000 seats**, entirely through the public API — a seed script holding credentials for three
+databases would be the first crack in database-per-service. It is safe to re-run.
 
 ---
 
-## 6. Documentation
+## 7. Documentation
 
 | Document | Contents |
 |---|---|
@@ -227,7 +281,7 @@ PostgreSQL 16 server, so the suite still runs against a genuine database rather 
 
 ---
 
-## 7. Invariants
+## 8. Invariants
 
 | ID | Invariant | Enforced by | Status |
 |---|---|---|---|
@@ -236,17 +290,18 @@ PostgreSQL 16 server, so the suite still runs against a genuine database rather 
 | INV-3 | Money is never captured without a `sold` seat | Finalize-then-capture, manual capture | phase 3 |
 | INV-4 | A seat is never `sold` without captured payment | Compensation path | phase 3 |
 | INV-5 | An expired hold never blocks another buyer | `held_until < now()` predicate, no reaper | ✅ proven |
-| INV-6 | Idempotent replay causes no extra side effects | `idempotency_keys` + body hash | ✅ proven (reservation) |
+| INV-6 | Idempotent replay causes no extra side effects | `idempotency_keys` + body hash | ✅ proven (reservation, seed) |
 | INV-7 | Correctness never depends on Redis, Kafka or a job | Postgres-only correctness path | ✅ proven for Phase 1 scope |
 | INV-8 | No overlapping *sold* occupancies (segmented mode) | GiST `EXCLUDE` constraint | phase 8 |
 
 ---
 
-## 8. Known limitations
+## 9. Known limitations
 
 Carried from [`DECISIONS.md`](DECISIONS.md) and tracked honestly as the build proceeds.
 
-- Phases 2–8 are not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
+- Phases 3–8 are not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
+- The `jti` denylist and rate limiting are in-process until Redis arrives in Phase 5, so both are per-replica rather than shared.
 - Seat writes are single-node. Sharding by `event_id` is the natural next step and is unimplemented.
 - The outbox relay (Phase 4) will poll every 500 ms; CDC would be lower latency.
 - No distributed tracing — `requestId` propagation is the deliberate substitute ([ADR-015](DECISIONS.md)).

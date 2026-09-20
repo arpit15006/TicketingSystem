@@ -1,3 +1,4 @@
+export { startTestIdentity, type TestIdentity } from './identity.js';
 export { startPostgresServer, resolveDockerHost, type PostgresServer } from './postgres-server.js';
 export { createTestDatabase, migrateUp, migrateDown, type TestDatabase } from './database.js';
 export {

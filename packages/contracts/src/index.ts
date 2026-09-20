@@ -4,6 +4,20 @@
  * Anything executable belongs in the service that owns the behaviour.
  */
 
+export {
+  ROLES,
+  ACTIONS,
+  ROLE_ACTIONS,
+  ACTION_SCOPE,
+  formatGrant,
+  parseGrant,
+  type Role,
+  type Action,
+  type ResourceType,
+  type RoleGrant,
+  type AccessTokenClaims,
+} from './auth.js';
+
 /* ------------------------------------------------------------------ seats */
 
 /** PRD §7.1 — `seat_status` enum, mirrored in TypeScript. */
@@ -114,6 +128,12 @@ export const ErrorCode = {
   idempotencyKeyReused: 'IDEMPOTENCY_KEY_REUSED',
   idempotentRequestInProgress: 'IDEMPOTENT_REQUEST_IN_PROGRESS',
   forbidden: 'FORBIDDEN',
+  emailAlreadyRegistered: 'EMAIL_ALREADY_REGISTERED',
+  invalidCredentials: 'INVALID_CREDENTIALS',
+  invalidRefreshToken: 'INVALID_REFRESH_TOKEN',
+  refreshTokenReused: 'REFRESH_TOKEN_REUSED',
+  notFound: 'NOT_FOUND',
+  conflict: 'CONFLICT',
   unauthorized: 'UNAUTHORIZED',
   internal: 'INTERNAL_ERROR',
 } as const;

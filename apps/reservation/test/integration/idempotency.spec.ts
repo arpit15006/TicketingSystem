@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fireConcurrentRequests, countByStatus } from '@ticketing/testkit';
-import { startHarness, seedSeats, userHeaders, type Harness } from '../helpers.js';
+import { startHarness, seedSeats, type Harness } from '../helpers.js';
 
 /** PRD §15.1 / ADR-009 — idempotency is a correctness property, not a convenience. */
 describe('idempotency', () => {
@@ -24,7 +24,7 @@ describe('idempotency', () => {
 
   it('same key + same body returns the identical response and creates exactly one hold', async () => {
     const { eventId, seatIds } = await seedSeats(harness.pool, 5);
-    const headers = { ...userHeaders(), 'idempotency-key': randomUUID() };
+    const headers = { ...(await harness.auth()), 'idempotency-key': randomUUID() };
     const body = { eventId, seatIds: [seatIds[0], seatIds[1]] };
 
     const first = await post(body, headers);
@@ -48,7 +48,7 @@ describe('idempotency', () => {
 
   it('same key + different body is rejected with 422 rather than silently replayed', async () => {
     const { eventId, seatIds } = await seedSeats(harness.pool, 5);
-    const headers = { ...userHeaders(), 'idempotency-key': randomUUID() };
+    const headers = { ...(await harness.auth()), 'idempotency-key': randomUUID() };
 
     const first = await post({ eventId, seatIds: [seatIds[0]] }, headers);
     expect(first.status).toBe(201);
@@ -65,10 +65,10 @@ describe('idempotency', () => {
     const taken = seatIds[0];
 
     // Someone else takes the seat first.
-    const winner = await post({ eventId, seatIds: [taken] }, userHeaders());
+    const winner = await post({ eventId, seatIds: [taken] }, await harness.auth());
     expect(winner.status).toBe(201);
 
-    const headers = { ...userHeaders(), 'idempotency-key': randomUUID() };
+    const headers = { ...(await harness.auth()), 'idempotency-key': randomUUID() };
     const first = await post({ eventId, seatIds: [taken] }, headers);
     const replay = await post({ eventId, seatIds: [taken] }, headers);
 
@@ -83,6 +83,7 @@ describe('idempotency', () => {
     const { eventId, seatIds } = await seedSeats(harness.pool, 3);
     const key = randomUUID();
     const userId = randomUUID();
+    const token = await harness.auth(userId);
 
     // The unique constraint on `key` decides the winner, exactly as the seat
     // allocation lets the database decide (ADR-002).
@@ -92,7 +93,7 @@ describe('idempotency', () => {
       build: () => ({
         method: 'POST',
         path: '/reservations',
-        headers: { 'x-dev-user-id': userId, 'idempotency-key': key },
+        headers: { ...token, 'idempotency-key': key },
         body: { eventId, seatIds: [seatIds[0]] },
       }),
     });
@@ -114,7 +115,7 @@ describe('idempotency', () => {
 
   it('a request without a key is not idempotent and holds different seats each time', async () => {
     const { eventId, seatIds } = await seedSeats(harness.pool, 4);
-    const headers = userHeaders();
+    const headers = await harness.auth();
 
     const first = await post({ eventId, seatIds: [seatIds[0]] }, headers);
     const second = await post({ eventId, seatIds: [seatIds[1]] }, headers);

@@ -5,13 +5,29 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
   "dependencies": {
     "@ticketing/contracts": "workspace:*",
     "@ticketing/logger": "workspace:*",
-    "fastify-plugin": "^5.1.0"
+    "fastify-plugin": "^5.1.0",
+    "jose": "^6.1.0"
   },
-  "peerDependencies": { "fastify": "^5.0.0", "pg": "^8.16.3" },
-  "devDependencies": { "@types/pg": "^8.15.6", "fastify": "^5.6.1", "pg": "^8.16.3", "typescript": "^5.9.3" }
+  "peerDependencies": {
+    "fastify": "^5.0.0",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.6",
+    "fastify": "^5.6.1",
+    "pg": "^8.16.3",
+    "typescript": "^5.9.3"
+  }
 }

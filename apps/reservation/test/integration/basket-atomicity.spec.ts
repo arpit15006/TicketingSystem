@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { fireConcurrentRequests, countByStatus } from '@ticketing/testkit';
-import { randomUUID } from 'node:crypto';
-import { startHarness, seedSeats, userHeaders, type Harness } from '../helpers.js';
+import { startHarness, seedSeats, type Harness } from '../helpers.js';
 
 /** PRD §8.1 — "Partial baskets are not allowed." */
 describe('basket atomicity', () => {
@@ -16,7 +15,7 @@ describe('basket atomicity', () => {
   const hold = async (eventId: string, seats: string[]): Promise<{ status: number; body: any }> => {
     const response = await fetch(`${harness.baseUrl}/reservations`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...userHeaders() },
+      headers: { 'content-type': 'application/json', ...(await harness.auth()) },
       body: JSON.stringify({ eventId, seatIds: seats }),
     });
     return { status: response.status, body: await response.json() };
@@ -53,16 +52,17 @@ describe('basket atomicity', () => {
   it('gives an adjacent-seat basket to exactly one of many contenders', async () => {
     const { eventId, seatIds } = await seedSeats(harness.pool, 4);
     const basket = seatIds.slice(0, 4);
+    const tokens = await Promise.all(Array.from({ length: 25 }, () => harness.auth()));
 
     // 200 buyers all want the same four seats together. Overlapping multi-row
     // updates are also where deadlocks would show up if the retry were missing.
     const results = await fireConcurrentRequests({
       baseUrl: harness.baseUrl,
       count: 200,
-      build: () => ({
+      build: (index) => ({
         method: 'POST',
         path: '/reservations',
-        headers: { 'x-dev-user-id': randomUUID() },
+        headers: tokens[index % tokens.length]!,
         body: { eventId, seatIds: basket },
       }),
     });
@@ -90,7 +90,7 @@ describe('basket atomicity', () => {
     const { eventId } = await seedSeats(harness.pool, 1);
     const response = await fetch(`${harness.baseUrl}/reservations`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...userHeaders() },
+      headers: { 'content-type': 'application/json', ...(await harness.auth()) },
       body: JSON.stringify({ eventId }),
     });
     expect(response.status).toBe(422);

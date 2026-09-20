@@ -17,6 +17,10 @@ export interface Config {
   statementTimeoutMs: number;
   janitorEnabled: boolean;
   janitorIntervalMs: number;
+  /** ADR-010 — this service verifies access tokens itself; it never trusts a header. */
+  jwksUri: string;
+  jwtIssuer: string;
+  jwtAudience: string;
   logLevel: string;
   nodeEnv: string;
 }
@@ -39,6 +43,9 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     // why it defaults to off in tests and why no test depends on it.
     janitorEnabled: (process.env['JANITOR_ENABLED'] ?? 'true') === 'true',
     janitorIntervalMs: int('JANITOR_INTERVAL_MS', 60_000),
+    jwksUri: process.env['JWKS_URI'] ?? 'http://localhost:3001/.well-known/jwks.json',
+    jwtIssuer: process.env['JWT_ISSUER'] ?? 'http://localhost:3001',
+    jwtAudience: process.env['JWT_AUDIENCE'] ?? 'ticketing',
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',
     ...overrides,

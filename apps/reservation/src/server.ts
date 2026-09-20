@@ -8,6 +8,8 @@ import { createLogger, LogEvent } from '@ticketing/logger';
 import {
   requestIdPlugin,
   errorHandlerPlugin,
+  authPlugin,
+  requirePermission,
   runIdempotent,
   hashRequest,
   IDEMPOTENCY_KEY_HEADER,
@@ -82,6 +84,14 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
 
+  // ADR-010 — the gateway verifying a signature does not make this service safe.
+  // It verifies every token itself, against identity's JWKS.
+  await app.register(authPlugin, {
+    jwksUri: config.jwksUri,
+    issuer: config.jwtIssuer,
+    audience: config.jwtAudience,
+  });
+
   app.get('/healthz', async () => ({ status: 'ok', service: 'reservation' }));
 
   app.get('/readyz', async (_req, reply) => {
@@ -111,7 +121,15 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
 
   /* ---------------------------------------------------------------- POST /reservations */
 
-  app.post('/reservations', { schema: { body: CreateReservationBody } }, async (req, reply) => {
+  app.post(
+    '/reservations',
+    {
+      schema: { body: CreateReservationBody },
+      // PRD §9.2 — holding a seat requires `booking:create`. The check lives here,
+      // in the service that owns the seat, not at the edge.
+      preHandler: requirePermission('booking:create'),
+    },
+    async (req, reply) => {
     const userId = requireUserId(req);
     const body = req.body;
 
@@ -192,10 +210,83 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
       );
 
       return reply.status(outcome.statusCode).send(outcome.body);
-    } finally {
-      exitAllocation();
-    }
-  });
+      } finally {
+        exitAllocation();
+      }
+    },
+  );
+
+  /* -------------------------------------- POST /inventory/:eventId/seats */
+
+  /**
+   * Provision seat inventory for an event.
+   *
+   * Seats live here and nowhere else: catalog owns the seatmap *geometry* but never
+   * writes seat state (PRD §4). So the seatmap is described to this service, and
+   * this service creates the rows.
+   *
+   * Authorization is by explicit `organizer:event:<id>` grant (or platform_admin):
+   * reservation has no idea who owns an event — that fact lives in catalog — so it
+   * cannot resolve ownership and must not pretend to. Requiring a grant that names
+   * the event is the honest check for a service that holds no ownership data.
+   */
+  app.post(
+    '/inventory/:eventId/seats',
+    {
+      schema: {
+        params: Type.Object({ eventId: UUID }),
+        body: Type.Object(
+          {
+            sections: Type.Array(
+              Type.Object(
+                {
+                  name: Type.String({ minLength: 1, maxLength: 50 }),
+                  tierId: UUID,
+                  rowCount: Type.Integer({ minimum: 1, maximum: 500 }),
+                  seatsPerRow: Type.Integer({ minimum: 1, maximum: 500 }),
+                },
+                { additionalProperties: false },
+              ),
+              { minItems: 1, maxItems: 50 },
+            ),
+          },
+          { additionalProperties: false },
+        ),
+      },
+      preHandler: requirePermission('event:update', (req) => ({
+        resourceId: (req.params as { eventId: string }).eventId,
+      })),
+    },
+    async (req, reply) => {
+      const { eventId } = req.params;
+
+      const created = await withTransaction(pool, async (client) => {
+        let total = 0;
+        for (const section of req.body.sections) {
+          // One statement per section rather than a row at a time: 5,000 seats is
+          // a cross join in the database, not 5,000 round trips.
+          // ON CONFLICT makes re-running the seed harmless.
+          const result = await client.query(
+            `INSERT INTO seats (event_id, section, row_label, seat_number, tier_id)
+             SELECT $1, $2, 'R' || r::text, s::text, $3
+             FROM generate_series(1, $4) AS r, generate_series(1, $5) AS s
+             ON CONFLICT (event_id, section, row_label, seat_number) DO NOTHING`,
+            [eventId, section.name, section.tierId, section.rowCount, section.seatsPerRow],
+          );
+          total += result.rowCount ?? 0;
+        }
+        return total;
+      });
+
+      const totalSeats = await pool.query<{ count: string }>(
+        `SELECT count(*) FROM seats WHERE event_id = $1`,
+        [eventId],
+      );
+
+      req.log.info({ eventId, created }, 'seats provisioned');
+      return reply.status(201).send({ eventId, created, totalSeats: Number(totalSeats.rows[0]?.count) });
+    },
+  );
 
   /* ------------------------------------------------- DELETE /reservations/:holdId */
 

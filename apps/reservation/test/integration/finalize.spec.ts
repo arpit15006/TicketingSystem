@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { startHarness, seedSeats, userHeaders, expireHold, type Harness } from '../helpers.js';
+import { startHarness, seedSeats, expireHold, type Harness } from '../helpers.js';
 
 /** PRD §8.3 — finalization, and the 410 that triggers the compensation path. */
 describe('finalize', () => {
@@ -15,7 +15,7 @@ describe('finalize', () => {
   const hold = async (eventId: string, seats: string[]): Promise<any> => {
     const response = await fetch(`${harness.baseUrl}/reservations`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...userHeaders() },
+      headers: { 'content-type': 'application/json', ...(await harness.auth()) },
       body: JSON.stringify({ eventId, seatIds: seats }),
     });
     return response.json();

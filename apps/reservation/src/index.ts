@@ -4,7 +4,7 @@ import { buildServer } from './server.js';
 import { startJanitor } from './janitor.js';
 
 const config = loadConfig();
-const pool = createPool(config);
+const pool = createPool({ databaseUrl: config.databaseUrl, max: config.pgPoolMax, statementTimeoutMs: config.statementTimeoutMs });
 const app = await buildServer({ config, pool });
 
 const stopJanitor = config.janitorEnabled ? startJanitor(pool, app.log, config.janitorIntervalMs) : () => {};

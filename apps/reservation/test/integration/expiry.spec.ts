@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startHarness, seedSeats, userHeaders, expireHold, type Harness } from '../helpers.js';
+import { startHarness, seedSeats, expireHold, type Harness } from '../helpers.js';
 
 /**
  * INV-5 — an expired hold never blocks another buyer.
@@ -21,7 +21,7 @@ describe('hold expiry is a predicate, not a job', () => {
   const hold = async (eventId: string, seats: string[]): Promise<{ status: number; body: any }> => {
     const response = await fetch(`${harness.baseUrl}/reservations`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...userHeaders() },
+      headers: { 'content-type': 'application/json', ...(await harness.auth()) },
       body: JSON.stringify({ eventId, seatIds: seats }),
     });
     return { status: response.status, body: await response.json() };
@@ -75,7 +75,7 @@ describe('hold expiry is a predicate, not a job', () => {
     // may already own by now.
     const extend = await fetch(`${harness.baseUrl}/holds/${first.body.holdId}/extend`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json', ...userHeaders() },
+      headers: { 'content-type': 'application/json', ...(await harness.auth()) },
       body: JSON.stringify({ seconds: 600 }),
     });
     expect(extend.status).toBe(409);
@@ -87,7 +87,7 @@ describe('hold expiry is a predicate, not a job', () => {
 
     const extend = await fetch(`${harness.baseUrl}/holds/${first.body.holdId}/extend`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json', ...userHeaders() },
+      headers: { 'content-type': 'application/json', ...(await harness.auth()) },
       body: JSON.stringify({ seconds: 1200 }),
     });
     expect(extend.status).toBe(200);
@@ -108,7 +108,7 @@ describe('hold expiry is a predicate, not a job', () => {
 
     const release = await fetch(`${harness.baseUrl}/reservations/${first.body.holdId}`, {
       method: 'DELETE',
-      headers: userHeaders(),
+      headers: await harness.auth(),
     });
     expect(release.status).toBe(200);
 

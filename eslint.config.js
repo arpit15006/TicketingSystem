@@ -27,9 +27,10 @@ export default tseslint.config(
     rules: { '@typescript-eslint/no-floating-promises': 'off' },
   },
   {
-    // Tests read loosely-typed JSON straight off the wire, which is the point:
-    // asserting against the real response shape rather than a convenient type.
-    files: ['**/test/**/*.ts'],
+    // Tests and the seed script read loosely-typed JSON straight off the wire,
+    // which is the point: they assert against the real response shape rather
+    // than against a convenient local type that could drift from it.
+    files: ['**/test/**/*.ts', 'scripts/**/*.ts'],
     rules: { '@typescript-eslint/no-explicit-any': 'off', '@typescript-eslint/no-unsafe-member-access': 'off' },
   },
 );

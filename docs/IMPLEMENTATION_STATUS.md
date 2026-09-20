@@ -10,11 +10,11 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 |---|---|---|
 | Phase 0 | Repository / architecture audit | ✅ VERIFIED |
 | Phase 1 | Reservation core ★ | ✅ VERIFIED |
-| Phase 2 | Identity + Catalog + Gateway | 🔄 NEXT — Phase 1 gate passed |
-| Phase 3 | Orders + Razorpay | ⏳ BLOCKED — awaits Phase 2 |
+| Phase 2 | Identity + Catalog + Gateway | ✅ VERIFIED |
+| Phase 3 | Orders + Razorpay | 🔄 NEXT — Phase 2 gate passed |
 | Phase 4 | Kafka + outbox + notification | ⏳ BLOCKED — awaits Phase 3 |
 | Phase 5 | Waiting room | ⏳ BLOCKED — awaits Phase 4 |
-| Phase 6 | Frontend | ⏳ BLOCKED — awaits Phase 5 |
+| Phase 6 | Frontend | ⛔ HOLD — user asked to be consulted before this phase begins |
 | Phase 7 | Proof + chaos + load | ⏳ BLOCKED — awaits Phase 6 |
 | Phase 8 | Segmented allocation | ⏳ BLOCKED — strictly additive, awaits Phase 7 |
 
@@ -27,7 +27,7 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 | INV-3 | No capture without a sold seat | `expiry-boundary.spec.ts` | ⏳ not yet proven |
 | INV-4 | No sold seat without captured payment | `expiry-boundary.spec.ts` | ⏳ not yet proven |
 | INV-5 | Expired hold never blocks a buyer | `expiry.spec.ts` | ✅ PROVEN — janitor disabled throughout |
-| INV-6 | Idempotent replay has no extra effects | `idempotency.spec.ts`, `webhook-replay.spec.ts` | 🟡 PARTIAL — proven for reservation; webhooks are Phase 3 |
+| INV-6 | Idempotent replay has no extra effects | `idempotency.spec.ts`, `webhook-replay.spec.ts` | 🟡 PARTIAL — proven for reservation and the seed; webhooks are Phase 3 |
 | INV-7 | Correctness independent of Redis/Kafka/jobs | `chaos-redis.spec.ts` + Kafka-kill | 🟡 PARTIAL — Phase 1 has no Redis/Kafka at all and the janitor is off in every test |
 | INV-8 | No overlapping sold occupancy (segmented) | `segment-exclusion.spec.ts` | ⏳ not yet proven in-project — constraint mechanism demonstrated in the Phase 0 spike |
 
@@ -231,3 +231,115 @@ determinism: 4 consecutive full runs → 32/32 each; peak in-flight 128 / 93 / 9
 **Decision**
 
 **PHASE 1 VERIFIED — PROCEED TO PHASE 2**
+
+
+---
+
+## PHASE 2 VERIFICATION REPORT
+
+**Implementation**
+
+*identity (:3001)*
+- [x] `POST /auth/register` — argon2id (19 MiB / t=2 / p=1), CITEXT email uniqueness, attendee granted on signup
+- [x] `POST /auth/login` — identical response for wrong password and unknown user (no enumeration oracle)
+- [x] **RS256** access tokens, **10-minute** TTL, claims `sub`/`roles[]`/`jti`/`iat`/`exp`
+- [x] Opaque 32-byte refresh tokens, stored only as SHA-256, **14-day** TTL, **rotated on every use**
+- [x] **Family reuse detection** — a re-presented rotated token revokes the whole `family_id`
+- [x] `jti` denylist behind a `TokenDenylist` interface (in-memory now; Redis in Phase 5, per ADR-011)
+- [x] `GET /.well-known/jwks.json` — public half only; identity verifies against its own in-process key rather than calling itself
+- [x] `POST /users/:userId/roles` — platform-admin-only role grants
+- [x] `BOOTSTRAP_ADMIN_EMAIL` so the first admin exists without a seed script touching identity's database
+
+*catalog (:3002)*
+- [x] `venues`, `events` (`draft|published|onsale|closed`, `onsale_at`, `waiting_room_enabled`), `seat_tiers`, `seatmap_sections`, `outbox`
+- [x] Venue/event/tier/section CRUD, public browse, seatmap geometry endpoint
+- [x] Publishing refuses an event with no pricing tier
+- [x] **Never writes or reports seat state** — asserted by a test that greps the seatmap response for seat-state fields
+
+*gateway (:3000)*
+- [x] Routing to identity, catalog, reservation (+ orders/queue prefixes ready for Phases 3 and 5)
+- [x] **Signature-only** JWT verification against JWKS; forwards no identity headers at all
+- [x] `requestId` minted at the edge, returned as `x-request-id`, forwarded on every upstream call
+- [x] Rate limiting with `retry-after`
+
+*cross-cutting*
+- [x] `authPlugin` + `requirePermission(action, resolver)` in `packages/http`; **every service verifies tokens itself** (ADR-010)
+- [x] Resource-scoped permissions: `ACTION_SCOPE` distinguishes global / own / event / venue
+- [x] Shared `pg` helpers consolidated into `packages/http`; reservation refactored onto them with no behaviour change
+- [x] `POST /inventory/:eventId/seats` — seat provisioning, which only reservation may do
+- [x] `pnpm seed` — demo organizer, venue, on-sale event, **5,000 seats**, fully API-driven and idempotent
+
+**Tests — 68 passing across 12 files (was 32 across 7)**
+
+- [x] `refresh-reuse.spec.ts` (6) — **mandatory PRD §15.1 test**: rotation, family revocation, blast-radius limit, no plaintext at rest, logout
+- [x] `auth.spec.ts` (10) — argon2id prefix asserted, RS256 header/claims, 600s TTL, enumeration parity, JWKS leaks no private material, tampered token rejected
+- [x] `catalog.spec.ts` (10) — resource-scoped authorization incl. cross-organizer denial and grant spillover, venue-scoped seatmap writes, no seat state leakage
+- [x] `end-to-end.spec.ts` (7) — **Phase 2 acceptance**, plus direct-to-service auth and forged-header tests
+- [x] `seed-and-limits.spec.ts` (3) — the real seed script run as a subprocess, re-run safety, rate limiting
+- [x] Phase 1 suites (32) — unchanged and passing
+
+**Acceptance criteria (PRD §16 Phase 2)**
+- [x] Registration, login, refresh, refresh rotation, **refresh reuse detection**
+- [x] JWKS served and consumed by other services
+- [x] Resource-scoped authorization (an organizer cannot touch another organizer's event)
+- [x] Gateway routing
+- [x] `requestId` propagation (inbound id preserved; minted when absent)
+- [x] Catalog functionality
+- [x] **5,000-seat seed**
+- [x] **Authenticated reservation through the gateway**
+
+**Regression**
+- [x] All Phase 1 tests pass — 100 × `201`, 900 × `409`, `oversell_total 0`
+- [x] Phase 1 tests now authenticate with **real RS256 tokens** instead of the dev header, so the regression is stronger than before
+- [x] Full suite run three times: 68/68 each time, `{"201":100,"409":900}` each time
+
+**Guardrails audited (PRD §19)**
+- [x] No ORM
+- [x] Redis still absent from the system entirely
+- [x] No background job on the correctness path
+- [x] **Gateway makes no authorization decision** — it verifies a signature and forwards nothing about identity
+- [x] No service queries another service's database; the seed uses only the public API
+- [x] No invented numbers
+
+**Commands executed**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm build
+pnpm test
+pnpm vitest run --project integration apps/identity
+pnpm vitest run --project integration apps/catalog
+pnpm vitest run --project integration apps/gateway
+```
+
+**Results**
+
+```
+typecheck : clean      lint : clean      build : 8/8 workspace projects
+
+ Test Files  12 passed (12)
+      Tests  68 passed (68)
+   Duration  4.19s
+
+oversell regression : {"201":100,"409":900}, peak in-flight 120, oversell_total 0
+determinism         : 3 consecutive full runs, 68/68 each
+```
+
+**Defects found and fixed during this phase**
+
+1. **Seed was not idempotent.** Re-running created a second venue, event and another 5,000 seats (the test caught 10,000). `ON CONFLICT` only protected within one event. The seed now looks for the demo event first and reuses it.
+2. **Identity fetched its own JWKS over HTTP** using its configured port, which is wrong whenever the service is bound somewhere else (every test). It now verifies against the key already in memory, via a new `localJwks` option.
+3. **Unavailable-seat list / routing** — `/inventory/:eventId/seats` replaced a path that collided with the gateway's `/reservations` prefix rewriting.
+4. **Client bug surfaced by the stack test** — sending `content-type: application/json` on a bodiless `DELETE` is rejected by Fastify, correctly. Fixed in the test client rather than loosening the server.
+
+**Deviations recorded**
+
+- **DEV-5** — PRD §7.3 specifies `PRIMARY KEY (user_id, role, resource_type, resource_id)` on `role_assignments` while also requiring `resource_type` to be `NULL` for global roles. Postgres makes every primary-key column `NOT NULL`, so a global grant could not be stored. Implemented with a surrogate key plus two partial unique indexes, preserving the intended uniqueness exactly, with the reasoning in the migration.
+- **DEV-6** — the `jti` denylist is in-process rather than Redis, because Redis does not enter the system until Phase 5. Behind the `TokenDenylist` interface, and honestly weaker (not shared between replicas) until then. No seat-correctness invariant depends on it (INV-7).
+
+**Known issues**
+- The dev identity header still exists but now defaults to **off** and grants no permissions; `requirePermission` ignores it entirely, so a caller using it can do nothing that needs a role.
+- Rate limiting is per-gateway-instance until Redis lands in Phase 5.
+
+**Decision**
+
+**PHASE 2 VERIFIED — PROCEED TO PHASE 3**

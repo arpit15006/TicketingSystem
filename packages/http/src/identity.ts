@@ -1,31 +1,27 @@
 import type { FastifyRequest } from 'fastify';
 import { unauthorized } from './errors.js';
 
-declare module 'fastify' {
-  interface FastifyRequest {
-    userId: string;
-  }
-}
-
 export const DEV_USER_HEADER = 'x-dev-user-id';
 
 /**
- * Phase 1 only.
+ * Resolves the calling user.
  *
- * There is no identity service yet, so the caller asserts who it is. This is
- * *attribution*, not authorization — nothing in Phase 1 grants a permission based
- * on it, and the seat-allocation guarantee does not depend on who is asking.
+ * A verified RS256 token always wins. The `x-dev-user-id` header is a Phase 1
+ * scaffold from before the identity service existed: it is *attribution*, not
+ * authorization — no permission is ever granted from it, and `requirePermission`
+ * ignores it entirely, so a caller using it has no roles and can do nothing that
+ * needs one.
  *
- * Phase 2 replaces this with RS256 verification of the JWT and sets
- * ALLOW_DEV_IDENTITY_HEADER=false, after which this path refuses to run outside
- * tests. It is env-gated rather than deleted so the switch-off is a visible,
- * testable event rather than a silent refactor.
+ * It stays env-gated rather than deleted so that switching it off is a visible,
+ * testable event. Production sets ALLOW_DEV_IDENTITY_HEADER=false.
  */
 export function devIdentityEnabled(): boolean {
-  return (process.env['ALLOW_DEV_IDENTITY_HEADER'] ?? 'true') === 'true';
+  return (process.env['ALLOW_DEV_IDENTITY_HEADER'] ?? 'false') === 'true';
 }
 
 export function requireUserId(req: FastifyRequest): string {
+  if (req.auth !== null && req.auth !== undefined) return req.auth.userId;
+
   const raw = req.headers[DEV_USER_HEADER];
   const headerValue = (Array.isArray(raw) ? raw[0] : raw)?.trim();
 
