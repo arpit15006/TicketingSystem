@@ -34,6 +34,26 @@ describe('migrations', () => {
     expect(names).toContain('outbox_unpublished');
   });
 
+  it('creates the segmented-allocation schema with its EXCLUDE constraint', async () => {
+    const tables = await db.pool.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
+    );
+    expect(tables.rows.map((r) => r.table_name)).toContain('seat_occupancies');
+
+    // The backstop for INV-8, asserted as a real constraint rather than assumed.
+    const constraint = await db.pool.query<{ conname: string; contype: string }>(
+      `SELECT conname, contype FROM pg_constraint WHERE conname = 'no_sold_segment_overlap'`,
+    );
+    expect(constraint.rowCount).toBe(1);
+    // 'x' is an exclusion constraint.
+    expect(constraint.rows[0]?.contype).toBe('x');
+
+    const gist = await db.pool.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes WHERE indexname = 'seat_occupancies_lookup'`,
+    );
+    expect(gist.rowCount).toBe(1);
+  });
+
   it('defines seat_status with exactly the four states', async () => {
     const values = await db.pool.query<{ enumlabel: string }>(
       `SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
@@ -51,7 +71,9 @@ describe('migrations', () => {
   });
 
   it('is reversible: down then up leaves the same schema', async () => {
-    await migrateDown(db.url, MIGRATIONS_DIR, 1);
+    // Roll back everything rather than a fixed count — otherwise this test
+    // silently stops proving reversibility the moment a migration is added.
+    await migrateDown(db.url, MIGRATIONS_DIR, Infinity);
 
     const afterDown = await db.pool.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,

@@ -24,16 +24,13 @@ import {
 import { ErrorCode, type HoldResponse } from '@ticketing/contracts';
 import type { Config } from './config.js';
 import { withTransaction, withDeadlockRetry } from './db.js';
-import {
-  acquireHold,
-  finalizeHold,
-  releaseHold,
-  extendHold,
-  pickGeneralAdmissionSeats,
-  AVAILABLE_SEATS_SQL,
-} from './allocation.js';
+// The allocation operations are now reached through the SeatAllocator (PRD §8.4);
+// only the shared availability SQL and hold extension are used directly here.
+import { extendHold, AVAILABLE_SEATS_SQL } from './allocation.js';
 import { incr, auditInvariants, renderPrometheus, enterAllocation, exitAllocation } from './metrics.js';
 import { createAdmissionGuard } from './admission.js';
+import { createEventPolicyLoader } from './event-policy.js';
+import { allocatorFor, wholeSeatAllocator, segmentAllocator } from './allocator.js';
 
 const UUID = Type.String({ format: 'uuid' });
 
@@ -45,6 +42,10 @@ const CreateReservationBody = Type.Object(
     // General admission: any N from a tier.
     tierId: Type.Optional(UUID),
     quantity: Type.Optional(Type.Integer({ minimum: 1 })),
+    // PRD §8.4 — the journey span. Required when the event is segmented,
+    // rejected with 422 when it is whole.
+    fromStop: Type.Optional(Type.Integer({ minimum: 0 })),
+    toStop: Type.Optional(Type.Integer({ minimum: 1 })),
   },
   { additionalProperties: false },
 );
@@ -99,10 +100,28 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
   const internalOnly = requireServiceToken(config.internalServiceToken);
 
   // PRD §12 — waiting-room admission, enforced by the service that owns the seat.
-  const enforceAdmission = createAdmissionGuard({
-    catalogUrl: config.catalogUrl,
-    admissionTokenSecret: config.admissionTokenSecret,
-  });
+  const enforceAdmission = createAdmissionGuard({ admissionTokenSecret: config.admissionTokenSecret });
+
+  // Catalog owns the event's allocation mode and waiting-room flag; both are
+  // fetched together, cached briefly, and fail safe when catalog is unreachable.
+  const loadPolicy = createEventPolicyLoader({ catalogUrl: config.catalogUrl });
+
+  /**
+   * PRD §8.4 — finalize and release dispatch on the DATA, not on catalog.
+   *
+   * A hold with rows in `seat_occupancies` was made by the segment allocator;
+   * anything else is whole-seat. Deriving it this way keeps finalize — the step
+   * that runs after money has been authorized — free of any dependency on
+   * catalog being reachable, and means whole-seat finalization is byte-for-byte
+   * the Phase 1 path with no added latency.
+   */
+  const allocatorForHold = async (client: import('pg').PoolClient, holdId: string) => {
+    const segmented = await client.query<{ count: string }>(
+      `SELECT count(*) FROM seat_occupancies WHERE hold_id = $1`,
+      [holdId],
+    );
+    return Number(segmented.rows[0]?.count ?? 0) > 0 ? segmentAllocator : wholeSeatAllocator;
+  };
 
   app.get('/healthz', async () => ({ status: 'ok', service: 'reservation' }));
 
@@ -123,9 +142,39 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
 
   app.get(
     '/availability',
-    { schema: { querystring: Type.Object({ eventId: UUID, limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000 })) }) } },
+    {
+      schema: {
+        querystring: Type.Object({
+          eventId: UUID,
+          limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000 })),
+          // PRD §8.4 — "which seats are free for stops 2→5 on this event".
+          fromStop: Type.Optional(Type.Integer({ minimum: 0 })),
+          toStop: Type.Optional(Type.Integer({ minimum: 1 })),
+        }),
+      },
+    },
     async (req) => {
-      const { eventId, limit } = req.query;
+      const { eventId, limit, fromStop, toStop } = req.query;
+
+      // A span in the query selects the segmented read; its absence keeps the
+      // Phase 1 query exactly as it was.
+      if (fromStop !== undefined && toStop !== undefined) {
+        if (toStop <= fromStop) {
+          throw new AppError(422, ErrorCode.validationFailed, 'toStop must be greater than fromStop');
+        }
+        const client = await pool.connect();
+        try {
+          const seats = await segmentAllocator.availability(client, {
+            eventId,
+            limit: limit ?? 500,
+            span: { fromStop, toStop },
+          });
+          return { eventId, fromStop, toStop, available: seats.length, seats };
+        } finally {
+          client.release();
+        }
+      }
+
       const result = await pool.query(AVAILABLE_SEATS_SQL, [eventId, limit ?? 500]);
       return { eventId, available: result.rowCount, seats: result.rows };
     },
@@ -149,10 +198,36 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
     const idempotencyKey = (Array.isArray(rawKey) ? rawKey[0] : rawKey)?.trim() || null;
     const requestHash = hashRequest('POST', '/reservations', body);
 
+    const policy = await loadPolicy(body.eventId, req.requestId);
+    const allocator = allocatorFor(policy.allocationMode);
+
     // PRD §12 — checked before any seat work. Fails open on every infrastructure
     // failure: the waiting room shapes traffic, it does not protect a seat.
     if (config.waitingRoomEnforcementEnabled) {
-      await enforceAdmission(req, { eventId: body.eventId, userId });
+      await enforceAdmission(req, {
+        eventId: body.eventId,
+        userId,
+        waitingRoomEnabled: policy.waitingRoomEnabled,
+      });
+    }
+
+    /*
+     * PRD §8.4 — the span is required in segmented mode and rejected in whole
+     * mode. Silently ignoring a span on a whole-seat event would sell someone a
+     * journey they did not get; silently defaulting one on a segmented event
+     * would sell them the wrong legs. Both are 422.
+     */
+    let span: { fromStop: number; toStop: number } | undefined;
+    if (allocator.mode === 'segmented') {
+      if (body.fromStop === undefined || body.toStop === undefined) {
+        throw new AppError(422, ErrorCode.validationFailed, 'This event is segmented; fromStop and toStop are required');
+      }
+      if (body.toStop <= body.fromStop) {
+        throw new AppError(422, ErrorCode.validationFailed, 'toStop must be greater than fromStop');
+      }
+      span = { fromStop: body.fromStop, toStop: body.toStop };
+    } else if (body.fromStop !== undefined || body.toStop !== undefined) {
+      throw new AppError(422, ErrorCode.validationFailed, 'This event is not segmented; fromStop and toStop are not accepted');
     }
 
     enterAllocation();
@@ -175,7 +250,12 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
               if (body.quantity > config.maxSeatsPerHold) {
                 throw new AppError(422, ErrorCode.validationFailed, `A basket may contain at most ${config.maxSeatsPerHold} seats`);
               }
-              seatIds = await pickGeneralAdmissionSeats(client, {
+              if (allocator.pickGeneralAdmission === undefined) {
+                // "Any N from a tier" has no meaning when availability depends
+                // on which legs you are travelling.
+                throw new AppError(422, ErrorCode.validationFailed, 'General admission is not supported for segmented events');
+              }
+              seatIds = await allocator.pickGeneralAdmission(client, {
                 eventId: body.eventId,
                 tierId: body.tierId,
                 quantity: body.quantity,
@@ -189,13 +269,14 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
               throw new AppError(422, ErrorCode.validationFailed, 'Provide either seatIds, or tierId and quantity');
             }
 
-            const result = await acquireHold({
+            const result = await allocator.acquire({
               client,
               eventId: body.eventId,
               userId,
               seatIds,
               holdSeconds: config.holdDurationSeconds,
               requestId: req.requestId,
+              span,
             });
 
             if ('shortfall' in result) {
@@ -312,9 +393,10 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
     requireUserId(req);
     const { holdId } = req.params;
 
-    const result = await withTransaction(pool, async (client) =>
-      releaseHold(client, { holdId, requestId: req.requestId }),
-    );
+    const result = await withTransaction(pool, async (client) => {
+      const allocator = await allocatorForHold(client, holdId);
+      return allocator.release(client, { holdId, requestId: req.requestId });
+    });
 
     if (result === null) throw holdNotFound(holdId);
     return reply.status(200).send({ holdId, releasedSeatIds: result.released });
@@ -333,7 +415,8 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
       const { orderId } = req.body;
 
       const result = await withTransaction(pool, async (client) => {
-        const finalize = await finalizeHold({ client, holdId, orderId, requestId: req.requestId });
+        const allocator = await allocatorForHold(client, holdId);
+        const finalize = await allocator.finalize({ client, holdId, orderId, requestId: req.requestId });
         if (finalize.expected === 0) throw holdNotFound(holdId);
 
         // PRD §8.3 — fewer rows than expected means the seat was lost. Throwing

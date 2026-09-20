@@ -5,7 +5,7 @@ It sells seats for events under one defining constraint: **a seat must never be 
 under a thousand simultaneous buyers, not when a service crashes, not when Redis is down, and not
 when a payment settles after the buyer's hold has already expired.
 
-> **Build status: Phases 1–5 and 7 verified. Phase 6 (frontend) is on hold at the owner's request; Phase 8 is next.** This README grows one phase at a time, and
+> **Build status: Phases 1–5, 7 and 8 verified. Phase 6 (frontend) is on hold at the owner's request.** This README grows one phase at a time, and
 > every number in it is copied from a real command's output. Sections belonging to unbuilt phases
 > say so rather than describing something that does not exist yet.
 > Progress: [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
@@ -84,6 +84,9 @@ resulting RSTs measure macOS, not seat allocation.)
 | Reservation service killed → seats free themselves | 7 | ✅ verified |
 | `docker compose up` healthy from a clean checkout | 7 | ✅ verified |
 | One `requestId` traced across every service | 7 | ✅ verified |
+| **Segmented: two passengers share one berth** | 8 | ✅ verified |
+| Segmented: 500 concurrent overlapping requests | 8 | ✅ verified |
+| `EXCLUDE` constraint rejects a hand-inserted conflict | 8 | ✅ verified |
 | k6 at 10,000 VUs | 7 | ⚠️ ran; latency **not representative** — see §1.7 |
 | Idempotent consumers under redelivery | 4 | ✅ verified |
 | `requestId` traced through Kafka into the consumer | 4 | ✅ verified |
@@ -284,6 +287,41 @@ every test in this repository runs with it disabled.
 If the `UPDATE` returns fewer rows than requested, the whole transaction rolls back and the client
 receives `409` naming the seats it lost. Partial baskets are not allowed: a buyer who asked for four
 seats together does not want two.
+
+### Segmented allocation (Phase 8) — one berth, two passengers
+
+For journey-based inventory a seat is not one indivisible unit. A berth from Delhi to Chennai can
+carry one passenger Delhi → Bhopal and another Bhopal → Chennai, and treating it as a single unit
+throws away half the capacity. Availability becomes *"is this seat free across every leg the
+requested journey spans"* — an interval-overlap problem, which Postgres answers natively:
+
+```sql
+CONSTRAINT no_sold_segment_overlap
+  EXCLUDE USING gist (seat_id WITH =, leg_range WITH &&)
+  WHERE (state = 'sold')
+```
+
+```
+seat B-12   [0 ─────── 3)[3 ─────── 7)     both sold, both legal
+seat B-13   [0 ─────────── 5)
+                    [3 ─────── 7)          overlaps — exactly one may exist
+```
+
+Correctness is **two-layered**, and the split is the interesting part. The constraint covers
+`state = 'sold'` only, because index predicates in Postgres must be `IMMUTABLE` and `now()` is not
+— a constraint over *live holds* cannot be expressed at all. So:
+
+| Conflict | Enforced by |
+|---|---|
+| sold vs sold | the `EXCLUDE` constraint — a hard database guarantee, independent of application code |
+| held vs sold, held vs held | the allocation query, serialized by `SELECT … FOR UPDATE` on the parent `seats` row |
+
+`segment-exclusion.spec.ts` bypasses the application entirely, inserts a conflicting sold row, and
+asserts the transaction aborts with `23P01`. Defence in depth demonstrated rather than claimed.
+
+Phase 8 is **strictly additive**: whole-seat schema, SQL and behaviour are untouched, and orders,
+the waiting room, the Kafka events and the compensation path required **zero modification** —
+dispatch happens behind a `SeatAllocator` interface.
 
 ### Why not Redlock
 
@@ -516,7 +554,7 @@ databases would be the first crack in database-per-service. It is safe to re-run
 | INV-5 | An expired hold never blocks another buyer | `held_until < now()` predicate, no reaper | ✅ proven |
 | INV-6 | Idempotent replay causes no extra side effects | `idempotency_keys` + body hash, `processed_webhooks` | ✅ proven |
 | INV-7 | Correctness never depends on Redis, Kafka or a job | Postgres-only correctness path | ✅ **proven** — killed Redis and Kafka, zero oversells |
-| INV-8 | No overlapping *sold* occupancies (segmented mode) | GiST `EXCLUDE` constraint | phase 8 |
+| INV-8 | No overlapping *sold* occupancies (segmented mode) | GiST `EXCLUDE` constraint + row lock | ✅ **proven** |
 
 ---
 
@@ -524,7 +562,7 @@ databases would be the first crack in database-per-service. It is safe to re-run
 
 Carried from [`DECISIONS.md`](DECISIONS.md) and tracked honestly as the build proceeds.
 
-- Phase 6 (frontend) is not built — on hold at the owner's request — and Phase 8 (segmented allocation) is not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
+- Phase 6 (frontend) is not built — on hold at the owner's request; the table in §1.2 is the authoritative list of what is and is not proven.
 - Waiting-room fairness is approximate: position is by join timestamp in a sorted set, and a Redis failover could disturb ordering. It fails open and holds no correctness state, so the worst case is an unfair queue, never an oversell.
 - Admission tokens are HS256 with a shared secret — deliberate, since the token grants a queue place and no authority over a seat, an order or money.
 - Seat writes are single-node. Sharding by `event_id` is the natural next step and is unimplemented.

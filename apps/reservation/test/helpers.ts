@@ -32,7 +32,7 @@ export interface Harness {
  * the way a client does, which is the only way the concurrency proof means anything.
  */
 export async function startHarness(
-  options: { holdDurationSeconds?: number; maxSeatsPerHold?: number } = {},
+  options: { holdDurationSeconds?: number; maxSeatsPerHold?: number; catalogUrl?: string } = {},
 ): Promise<Harness> {
   const adminUrl = inject('pgAdminUrl');
   const db = await createTestDatabase({ adminUrl, migrationsDir: MIGRATIONS_DIR });
@@ -52,6 +52,7 @@ export async function startHarness(
     // Phase 5 added waiting-room enforcement; the Phase 1-3 suites predate it and
     // test allocation directly, so it is off here and covered by its own suite.
     waitingRoomEnforcementEnabled: false,
+    ...(options.catalogUrl === undefined ? {} : { catalogUrl: options.catalogUrl }),
     // Enough connections that the pool is not the bottleneck the test accidentally
     // measures; Postgres is configured for 300 backends.
     pgPoolMax: 60,

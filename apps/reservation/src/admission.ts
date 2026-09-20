@@ -5,16 +5,8 @@ import { ErrorCode } from '@ticketing/contracts';
 
 export const ADMISSION_TOKEN_HEADER = 'x-admission-token';
 
-interface CachedPolicy {
-  waitingRoomEnabled: boolean;
-  expiresAt: number;
-}
-
 export interface AdmissionOptions {
-  catalogUrl: string;
   admissionTokenSecret: string;
-  /** Short — an organizer toggling the waiting room should take effect quickly. */
-  policyCacheMs?: number;
 }
 
 /**
@@ -32,33 +24,13 @@ export interface AdmissionOptions {
  * a ticket (ADR-012, INV-7).
  */
 export function createAdmissionGuard(options: AdmissionOptions) {
-  const cacheMs = options.policyCacheMs ?? 5_000;
-  const policyCache = new Map<string, CachedPolicy>();
   const secret = new TextEncoder().encode(options.admissionTokenSecret);
 
-  async function waitingRoomEnabled(eventId: string, requestId: string): Promise<boolean> {
-    const cached = policyCache.get(eventId);
-    if (cached !== undefined && cached.expiresAt > Date.now()) return cached.waitingRoomEnabled;
-
-    try {
-      const response = await fetch(`${options.catalogUrl}/events/${eventId}`, {
-        headers: { 'x-request-id': requestId },
-        signal: AbortSignal.timeout(2_000),
-      });
-      if (!response.ok) return false;
-
-      const body = (await response.json()) as { waiting_room_enabled?: boolean };
-      const enabled = body.waiting_room_enabled === true;
-      policyCache.set(eventId, { waitingRoomEnabled: enabled, expiresAt: Date.now() + cacheMs });
-      return enabled;
-    } catch {
-      // Catalog unreachable — fail open rather than block every booking.
-      return false;
-    }
-  }
-
-  return async function enforceAdmission(req: FastifyRequest, args: { eventId: string; userId: string }): Promise<void> {
-    if (!(await waitingRoomEnabled(args.eventId, req.requestId))) return;
+  return async function enforceAdmission(
+    req: FastifyRequest,
+    args: { eventId: string; userId: string; waitingRoomEnabled: boolean },
+  ): Promise<void> {
+    if (!args.waitingRoomEnabled) return;
 
     const raw = req.headers[ADMISSION_TOKEN_HEADER];
     const token = (Array.isArray(raw) ? raw[0] : raw)?.trim();

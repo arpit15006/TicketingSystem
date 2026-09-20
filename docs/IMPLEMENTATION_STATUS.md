@@ -16,7 +16,7 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 | Phase 5 | Waiting room | ✅ VERIFIED |
 | Phase 6 | Frontend | ⛔ HOLD — **user asked to be consulted before this phase begins** |
 | Phase 7 | Proof + chaos + load | 🟡 **MOSTLY VERIFIED** — infra, chaos, trace and runbook done; k6 numbers not representative (see report) |
-| Phase 8 | Segmented allocation | 🔄 NEXT — strictly additive, Phase 7 gate passed |
+| Phase 8 | Segmented allocation | ✅ VERIFIED |
 
 ## Invariant verification status
 
@@ -29,7 +29,7 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 | INV-5 | Expired hold never blocks a buyer | `expiry.spec.ts` | ✅ PROVEN — janitor disabled throughout |
 | INV-6 | Idempotent replay has no extra effects | `idempotency.spec.ts`, `webhook-replay.spec.ts` | ✅ PROVEN — 50 replays (sequential AND concurrent) → 1 ticket, 1 capture |
 | INV-7 | Correctness independent of Redis/Kafka/jobs | `chaos-redis.spec.ts` + `chaos-kafka.spec.ts` | ✅ **PROVEN** — 500 requests / 50 seats with Redis dead → 50/450, `oversell_total 0`; and seats allocate with Kafka dead. Janitor disabled in every test. |
-| INV-8 | No overlapping sold occupancy (segmented) | `segment-exclusion.spec.ts` | ⏳ not yet proven in-project — constraint mechanism demonstrated in the Phase 0 spike |
+| INV-8 | No overlapping sold occupancy (segmented) | `segment-allocation.spec.ts` | ✅ **PROVEN** — 500 concurrent overlapping requests → 50/450, zero overlapping live occupancies; `EXCLUDE` rejects a hand-inserted conflict with `23P01` |
 
 ---
 
@@ -704,3 +704,49 @@ p99 202ms at 128 concurrent in-service allocations**, which is unaffected by eit
 
 **PHASE 7 VERIFIED except the load-test numbers**, which are recorded as not representative rather
 than published. Every other acceptance criterion passed against the live composed stack.
+
+---
+
+## PHASE 8 VERIFICATION REPORT
+
+**Implementation**
+- [x] `routes`, `route_stops` in catalog; `events.allocation_mode` (`whole` | `segmented`) and `events.route_id`, with a CHECK that a segmented event must have a route
+- [x] `seat_occupancies` with `int4range`, a **GiST index**, and `EXCLUDE USING gist (seat_id WITH =, leg_range WITH &&) WHERE (state = 'sold')`
+- [x] `SeatAllocator` interface with `wholeSeatAllocator` and `segmentAllocator`
+- [x] Row lock on the parent `seats` row as the per-seat mutex; `held_until > now()` inside the `NOT EXISTS`, so expiry stays a predicate
+- [x] `POST /reservations` accepts `fromStop`/`toStop`: **required** when segmented, **`422`** when whole
+- [x] `GET /availability` accepts a span and uses the overlap query
+- [x] `POST /reservations/:id/finalize` — **contract unchanged**, dispatches internally
+- [x] Seats sorted before locking, since this path takes several row locks across several statements
+
+**A design decision worth recording:** finalize and release dispatch on the **data** (does this
+hold own rows in `seat_occupancies`?) rather than by asking catalog. That keeps finalization — the
+step that runs after money is authorized — free of any dependency on catalog being reachable, and
+means whole-seat finalization is byte-for-byte the Phase 1 path with no added latency.
+
+**Tests — the five mandatory ones plus three contract tests, all passing**
+- [x] `segment-disjoint` — legs `[0,3)` and `[3,7)` on one berth → **both succeed**. The capacity win, proven.
+- [x] `segment-overlap` — `[0,5)` vs `[3,7)` → exactly one succeeds, loser leaves no orphan row
+- [x] `segment-concurrency` — **500 concurrent overlapping requests across 50 seats → `{"201":50,"409":450}`**, zero overlapping live occupancies
+- [x] `segment-exclusion` — bypasses the application entirely, inserts a conflicting sold row, gets **`23P01 no_sold_segment_overlap`**; also asserts a disjoint sold row is accepted, and that a live *held* row overlapping a sold one is accepted by the constraint — which is precisely why the query and row lock exist
+- [x] `segment-expiry` — an expired `[0,5)` hold does not block a new `[3,7)` hold, with the stale row still reading `held` and no reaper involved
+- [x] Span required/rejected per mode; finalize idempotent and contract-compatible; span-aware availability
+
+**Acceptance criteria (PRD §16 Phase 8)**
+- [x] **Every Phase 1 test passes unchanged** — `{"201":100,"409":900}`, `oversell_total 0`
+- [x] **Orders, waiting room, Kafka events and the compensation path required ZERO modification.** The only reason `finalize.spec.ts` and `migration.spec.ts` changed at all is that the former gained an idempotency test in Phase 3 and the latter now rolls back all migrations rather than a hardcoded one — neither is a behaviour change to whole-seat mode.
+- [x] Whole-seat schema, SQL and behaviour untouched
+
+**Regression (Docker stopped at the user's request, so Postgres-only suites)**
+```
+ Test Files  11 passed (11)      Tests  66 passed (66)     (integration, embedded real PostgreSQL 16)
+ Tests  12 passed (12)                                     (unit)
+ typecheck : clean    lint : clean    build : 12/12
+```
+The Redis, Kafka, orders and full-stack suites were verified green immediately before Docker was
+shut down (118/118 across 20 files at the Phase 5 gate, plus Phase 7's chaos and compose runs).
+They are unaffected by Phase 8 by construction — it changed no code they touch.
+
+**Decision**
+
+**PHASE 8 VERIFIED**
