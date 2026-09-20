@@ -211,6 +211,42 @@ export interface OrderSummary {
   scannedCount: number
 }
 
+/** One row of `GET /notifications` — the caller's own. */
+export interface NotificationRow {
+  notification_id: string
+  event_id: string
+  kind: "order_confirmed" | "order_compensated" | "payment_failed" | "seat_sold"
+  subject: string
+  body: string
+  request_id: string | null
+  delivered_at: string | null
+  created_at: string
+}
+
+/** `GET /orders/events/:id/sales` — organizer money view. */
+export interface EventSales {
+  eventId: string
+  revenuePaise: number
+  confirmedOrders: number
+  pendingOrders: number
+  compensatedOrders: number
+  ticketsIssued: number
+  ticketsScanned: number
+  byDay: { day: string; orders: number; revenuePaise: number }[]
+}
+
+/** One row of `GET /orders/events/:id/orders`. */
+export interface EventOrderRow {
+  orderId: string
+  userId: string
+  seatCount: number
+  amountPaise: number
+  status: OrderStatus
+  createdAt: string
+  ticketCount: number
+  scannedCount: number
+}
+
 /** `POST /tickets/scan` (Phase 6a). */
 export interface ScanResult {
   ticketId: string

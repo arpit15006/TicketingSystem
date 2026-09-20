@@ -30,7 +30,7 @@ const COLUMNS: { heading: string; links: { label: string; href: string }[] }[] =
 
 export function SiteFooter() {
   return (
-    <footer className="border-t bg-muted/30">
+    <footer className="border-t bg-muted/30 print:hidden">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-10">
         <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex flex-col gap-3">

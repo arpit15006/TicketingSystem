@@ -4,7 +4,9 @@ import Link from "next/link"
 import { useParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import QRCode from "react-qr-code"
-import { CalendarIcon, CheckCircle2Icon, CircleAlertIcon, ClockIcon, MapPinIcon } from "lucide-react"
+import { CalendarIcon, CalendarPlusIcon, CheckCircle2Icon, CircleAlertIcon, ClockIcon, MapPinIcon, PrinterIcon } from "lucide-react"
+import { ShareButton } from "@/components/share-button"
+import { downloadIcs } from "@/lib/calendar"
 import { EventPoster } from "@/components/event-card"
 import { BookingSteps } from "@/components/booking-steps"
 import { Badge } from "@/components/ui/badge"
@@ -178,7 +180,28 @@ export default function OrderPage() {
         </CardContent>
       </Card>
 
-      <Button variant="outline" asChild>
+      {confirmed && (
+        <div className="flex flex-wrap gap-2 print:hidden">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={event === undefined}
+            onClick={() =>
+              event !== undefined &&
+              downloadIcs({ title: event.title, startsAt: event.starts_at, location: "See the event page", url: window.location.href, uid: order.orderId })
+            }
+          >
+            <CalendarPlusIcon className="size-4" />
+            Add to calendar
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => window.print()}>
+            <PrinterIcon className="size-4" />
+            Download / print
+          </Button>
+          <ShareButton title={event?.title ?? "My ticket"} text="My tickets" />
+        </div>
+      )}
+      <Button variant="outline" className="print:hidden" asChild>
         <Link href="/">Browse more events</Link>
       </Button>
     </div>

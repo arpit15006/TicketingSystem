@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { CalendarIcon, ChevronRightIcon, MapPinIcon, QrCodeIcon, TicketsIcon } from "lucide-react"
@@ -31,6 +32,9 @@ const LABEL: Record<OrderStatus, { text: string; variant: "default" | "secondary
 export default function BookingsPage() {
   const { isAuthenticated, isLoading: sessionLoading } = useSession()
   const { data: events } = useEvents()
+  // Captured once at mount: reading the clock during render is impure. Hooks
+  // stay above the sign-in early return.
+  const [now] = React.useState(() => Date.now())
   const { data, isLoading, error } = useQuery({
     queryKey: ["orders", "mine"],
     queryFn: async () => (await api<{ orders: OrderSummary[] }>("/orders")).orders,
@@ -53,7 +57,9 @@ export default function BookingsPage() {
 
   const eventsById = new Map((events ?? []).map((e) => [e.event_id, e]))
   const orders = data ?? []
-  const upcoming = orders.filter((o) => o.status === "confirmed")
+  const startsAt = (o: OrderSummary): number => new Date(eventsById.get(o.eventId)?.starts_at ?? 0).getTime()
+  const confirmedAll = orders.filter((o) => o.status === "confirmed")
+  const upcoming = confirmedAll.filter((o) => startsAt(o) >= now)
   const pending = orders.filter((o) => o.status === "awaiting_payment" || o.status === "created" || o.status === "payment_authorized")
   const past = orders.filter((o) => !upcoming.includes(o) && !pending.includes(o))
 
@@ -98,13 +104,13 @@ export default function BookingsPage() {
       ) : (
         <Tabs defaultValue={upcoming.length > 0 ? "tickets" : pending.length > 0 ? "pending" : "past"}>
           <TabsList>
-            <TabsTrigger value="tickets">Tickets ({upcoming.length})</TabsTrigger>
+            <TabsTrigger value="tickets">Upcoming ({upcoming.length})</TabsTrigger>
             <TabsTrigger value="pending">Pending ({pending.length})</TabsTrigger>
-            <TabsTrigger value="past">Other ({past.length})</TabsTrigger>
+            <TabsTrigger value="past">Past & other ({past.length})</TabsTrigger>
           </TabsList>
           {(
             [
-              ["tickets", upcoming, "No confirmed tickets yet."],
+              ["tickets", upcoming, "No upcoming tickets."],
               ["pending", pending, "Nothing waiting on payment."],
               ["past", past, "Nothing here."],
             ] as const

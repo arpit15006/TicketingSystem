@@ -4,9 +4,11 @@ import type { RoleGrant } from '@ticketing/contracts';
 export interface IdentityClient {
   /** Grant a resource-scoped role. Throws when identity refuses or is unreachable. */
   grant: (
-    args: { userId: string; role: 'organizer' | 'venue_admin'; resourceType: 'event' | 'venue'; resourceId: string },
+    args: { userId: string; role: 'organizer' | 'venue_admin' | 'scanner'; resourceType: 'event' | 'venue'; resourceId: string },
     requestId: string,
   ) => Promise<RoleGrant[]>;
+  /** Resolve an email to a user, or null when there is none. */
+  findByEmail: (email: string, requestId: string) => Promise<{ userId: string; email: string; fullName: string } | null>;
 }
 
 /**
@@ -31,6 +33,15 @@ export function createIdentityClient(options: { baseUrl: string; serviceToken: s
       if (!response.ok) throw new Error(`identity grant failed: HTTP ${response.status}`);
       const body = (await response.json()) as { roles: RoleGrant[] };
       return body.roles;
+    },
+    findByEmail: async (email, requestId) => {
+      const response = await fetch(`${options.baseUrl}/internal/users/by-email?email=${encodeURIComponent(email)}`, {
+        headers: { [SERVICE_TOKEN_HEADER]: options.serviceToken, 'x-request-id': requestId },
+        signal: AbortSignal.timeout(3_000),
+      });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error(`identity lookup failed: HTTP ${response.status}`);
+      return (await response.json()) as { userId: string; email: string; fullName: string };
     },
   };
 }

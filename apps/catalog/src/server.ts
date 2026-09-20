@@ -183,6 +183,12 @@ export async function buildServer({ config, pool, redis = null, identity }: Buil
     },
   );
 
+  /** Every venue. Public, like the events that reference them. */
+  app.get('/venues', async () => {
+    const rows = await pool.query(`SELECT venue_id, name, address, city FROM venues ORDER BY city, name`);
+    return { venues: rows.rows };
+  });
+
   app.get('/venues/:venueId', { schema: { params: Type.Object({ venueId: UUID }) } }, async (req) => {
     const found = await pool.query(`SELECT venue_id, name, address, city FROM venues WHERE venue_id = $1`, [
       req.params.venueId,
@@ -385,6 +391,36 @@ export async function buildServer({ config, pool, redis = null, identity }: Buil
         [req.params.eventId, target],
       );
       return updated.rows[0];
+    },
+  );
+
+  /* ------------------------------------------------------------- scanners */
+
+  /**
+   * "Hire a scanner for my event." PRD §9.2 scopes `scanner` to "events assigned
+   * to them"; this is where an organizer does the assigning. Catalog checks the
+   * caller owns the event (it holds `organizer_id`), then asks identity to turn
+   * the email into a user and record the scoped grant — the same service-auth
+   * handoff creation uses. Catalog never touches identity's tables.
+   */
+  app.post(
+    '/events/:eventId/scanners',
+    {
+      schema: {
+        params: Type.Object({ eventId: UUID }),
+        body: Type.Object({ email: Type.String({ format: 'email', maxLength: 320 }) }, { additionalProperties: false }),
+      },
+      preHandler: requirePermission('event:update', resolveEventOwner),
+    },
+    async (req, reply) => {
+      const user = await identityClient.findByEmail(req.body.email, req.requestId);
+      if (user === null) throw new AppError(404, ErrorCode.notFound, 'No account with that email — they need to register first');
+      await identityClient.grant(
+        { userId: user.userId, role: 'scanner', resourceType: 'event', resourceId: req.params.eventId },
+        req.requestId,
+      );
+      req.log.info({ eventId: req.params.eventId, scanner: user.userId }, 'scanner assigned');
+      return reply.status(201).send({ userId: user.userId, email: user.email, fullName: user.fullName, eventId: req.params.eventId });
     },
   );
 

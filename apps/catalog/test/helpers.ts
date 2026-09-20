@@ -20,6 +20,8 @@ export interface Harness {
   grants: { userId: string; role: string; resourceType: string; resourceId: string }[];
   /** Make the next grant call fail, to prove creation rolls back with it. */
   failNextGrant: () => void;
+  /** Users the fake identity knows, by email. */
+  users: Map<string, { userId: string; email: string; fullName: string }>;
   as: (roles: RoleGrant[], userId?: string) => Promise<Record<string, string>>;
   request: (
     method: string,
@@ -51,8 +53,10 @@ export async function startHarness(): Promise<Harness> {
    * the grant fail to prove the INSERT rolls back with it.
    */
   const grants: Harness['grants'] = [];
+  const users: Harness['users'] = new Map();
   let failNext = false;
   const fakeIdentity: IdentityClient = {
+    findByEmail: async (email) => users.get(email) ?? null,
     grant: async (args) => {
       if (failNext) {
         failNext = false;
@@ -77,6 +81,7 @@ export async function startHarness(): Promise<Harness> {
     baseUrl,
     identity,
     grants,
+    users,
     failNextGrant: () => {
       failNext = true;
     },

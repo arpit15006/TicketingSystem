@@ -13,6 +13,9 @@ export interface Config {
   pgPoolMax: number;
   kafkaBrokers: string[];
   consumerGroupId: string;
+  jwksUri: string;
+  jwtIssuer: string;
+  jwtAudience: string;
   logLevel: string;
   nodeEnv: string;
 }
@@ -28,6 +31,9 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     pgPoolMax: int('PG_POOL_MAX', 10),
     kafkaBrokers: (process.env['KAFKA_BROKERS'] ?? 'localhost:9092').split(',').map((broker) => broker.trim()),
     consumerGroupId: process.env['CONSUMER_GROUP_ID'] ?? 'notification',
+    jwksUri: process.env['JWKS_URI'] ?? 'http://localhost:3001/.well-known/jwks.json',
+    jwtIssuer: process.env['JWT_ISSUER'] ?? 'http://localhost:3001',
+    jwtAudience: process.env['JWT_AUDIENCE'] ?? 'ticketing',
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',
     ...overrides,

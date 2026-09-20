@@ -296,6 +296,73 @@ export async function buildServer({ config, pool, keys, denylist }: BuildServerO
     },
   );
 
+  /* ------------------------------------------------------ change password */
+
+  /**
+   * Proves the current password, sets the new one, and revokes every refresh
+   * family the account has — a changed password is the moment a user most wants
+   * other sessions gone. A fresh pair is issued so *this* session continues.
+   */
+  app.post(
+    '/auth/change-password',
+    {
+      schema: {
+        body: Type.Object(
+          { currentPassword: Type.String({ minLength: 1 }), newPassword: Password },
+          { additionalProperties: false },
+        ),
+      },
+    },
+    async (req, reply) => {
+      const auth = requireAuth(req);
+      const found = await pool.query<{ password_hash: string }>(`SELECT password_hash FROM users WHERE user_id = $1`, [auth.userId]);
+      const row = found.rows[0];
+      if (row === undefined || !(await verifyPassword(req.body.currentPassword, row.password_hash))) {
+        throw new AppError(401, ErrorCode.invalidCredentials, 'Current password is incorrect');
+      }
+
+      const tokens = await withTransaction(pool, async (client) => {
+        await client.query(`UPDATE users SET password_hash = $2 WHERE user_id = $1`, [auth.userId, await hashPassword(req.body.newPassword)]);
+        const families = await client.query<{ family_id: string }>(
+          `SELECT DISTINCT family_id FROM refresh_tokens WHERE user_id = $1`,
+          [auth.userId],
+        );
+        for (const family of families.rows) await revokeFamily(client, family.family_id);
+        return issueTokenPair(client, keys, config, { userId: auth.userId });
+      });
+
+      req.log.info({ userId: auth.userId, revokedFamilies: true }, 'password changed');
+      return reply.status(200).send({
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.expiresIn,
+      });
+    },
+  );
+
+  /* --------------------------------------------- internal user lookup */
+
+  /**
+   * For catalog to turn "assign scanner@x.test to my event" into a user id. Only
+   * another service may ask, and the answer is the minimum a grant needs.
+   */
+  app.get(
+    '/internal/users/by-email',
+    {
+      schema: { querystring: Type.Object({ email: Email }) },
+      preHandler: requireServiceToken(config.internalServiceToken),
+    },
+    async (req) => {
+      const found = await pool.query<{ user_id: string; email: string; full_name: string }>(
+        `SELECT user_id, email, full_name FROM users WHERE email = $1`,
+        [req.query.email],
+      );
+      const row = found.rows[0];
+      if (row === undefined) throw new AppError(404, ErrorCode.notFound, 'No user with that email');
+      return { userId: row.user_id, email: row.email, fullName: row.full_name };
+    },
+  );
+
   /* --------------------------------------------- internal role grants */
 
   /**

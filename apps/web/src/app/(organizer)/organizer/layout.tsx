@@ -184,7 +184,7 @@ export default function OrganizerLayout({ children }: { children: React.ReactNod
           <SidebarTrigger />
           <Separator orientation="vertical" className="mx-1 h-5" />
           <span className="text-sm font-medium">
-            {pathname === "/organizer/new" ? "New event" : "Overview"}
+            {pathname === "/organizer/new" ? "New event" : pathname.startsWith("/organizer/events/") ? "Event" : "Overview"}
           </span>
           <div className="ml-auto">
             <ThemeToggle />

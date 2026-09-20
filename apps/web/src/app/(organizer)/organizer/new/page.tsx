@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import { useQueries } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { useFieldArray, useForm, Controller } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -23,8 +23,7 @@ import { Separator } from "@/components/ui/separator"
 import { Progress } from "@/components/ui/progress"
 import { CreateVenueDialog } from "@/components/organizer/create-venue-dialog"
 import { api, ApiError } from "@/lib/api"
-import { pickUpNewGrants, useSession } from "@/lib/auth"
-import { useEvents, useMyEvents } from "@/lib/queries"
+import { pickUpNewGrants } from "@/lib/auth"
 import { formatShortDate } from "@/lib/format"
 import type { Venue } from "@/lib/api-types"
 
@@ -57,31 +56,20 @@ type Step = { label: string; state: "todo" | "doing" | "done" | "failed" }
 
 export default function NewEventPage() {
   const router = useRouter()
-  const { isAuthenticated } = useSession()
-  const { data: publicEvents } = useEvents()
-  const { data: myEvents } = useMyEvents(isAuthenticated)
   const [extraVenues, setExtraVenues] = React.useState<Venue[]>([])
   const [steps, setSteps] = React.useState<Step[] | null>(null)
 
-  // Venues are not listable; the ones this account can see are the ones its
-  // events reference, plus any created in this session.
-  const venueIds = React.useMemo(
-    () => [...new Set([...(publicEvents ?? []), ...(myEvents ?? [])].map((e) => e.venue_id))],
-    [publicEvents, myEvents]
-  )
-  const venueQueries = useQueries({
-    queries: venueIds.map((id) => ({
-      queryKey: ["venue", id],
-      queryFn: async () => api<Venue>(`/catalog/venues/${id}`),
-      staleTime: 600_000,
-    })),
+  const venuesQuery = useQuery({
+    queryKey: ["venues"],
+    queryFn: async () => (await api<{ venues: Venue[] }>("/catalog/venues")).venues,
+    staleTime: 60_000,
   })
   const venues = React.useMemo(() => {
     const map = new Map<string, Venue>()
-    for (const q of venueQueries) if (q.data !== undefined) map.set(q.data.venue_id, q.data)
+    for (const v of venuesQuery.data ?? []) map.set(v.venue_id, v)
     for (const v of extraVenues) map.set(v.venue_id, v)
     return [...map.values()].sort((a, b) => a.city.localeCompare(b.city) || a.name.localeCompare(b.name))
-  }, [venueQueries, extraVenues])
+  }, [venuesQuery.data, extraVenues])
 
   const form = useForm<FormInput, unknown, Values>({
     resolver: zodResolver(schema),

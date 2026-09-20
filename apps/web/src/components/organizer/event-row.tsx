@@ -96,7 +96,7 @@ export function EventRow({ event, onSales }: { event: EventSummary; onSales: (id
     <TableRow>
       <TableCell>
         <div className="flex flex-col">
-          <Link href={`/events/${event.event_id}`} className="font-medium hover:underline">
+          <Link href={`/organizer/events/${event.event_id}`} className="font-medium hover:underline">
             {event.title}
           </Link>
           <span className="text-xs text-muted-foreground">
@@ -139,6 +139,12 @@ export function EventRow({ event, onSales }: { event: EventSummary; onSales: (id
           <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuLabel>{event.title}</DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link href={`/organizer/events/${event.event_id}`}>
+                <ArmchairIcon className="size-4" />
+                Manage
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link href={`/events/${event.event_id}`}>
                 <ExternalLinkIcon className="size-4" />

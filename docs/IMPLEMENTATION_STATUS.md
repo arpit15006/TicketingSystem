@@ -753,6 +753,25 @@ status counts  : {"201":50,"409":450}
 
 **Exit criteria**: ✅ met. Phase 6b (the Next.js app) may proceed.
 
+### Phase 6b — later additions (after the user's UI/UX review)
+
+Four rounds on the user's direction, each verified in a real Chrome over CDP against the live
+stack, each committed separately.
+
+| Round | What | Backend added (tested) | Browser checks |
+|---|---|---|---|
+| Proof + bookings + camera | `/proof` fires ≤300 concurrent holds from the app server and counts every outcome; `/bookings`; camera scanner keeps decoding | `GET /orders` (own only); `/metrics` proxied read-only | storm 200/20 → 20 won, 0 dup, peak 128, `oversell_total 0` |
+| Booking flow | seatmap zoom/pan, single floating tooltip, stage marker, tier filter, best-available, mobile bar, steps; checkout with itemised bill, ₹0 fee written down, contact, live countdown | — | 28 |
+| Storefront & branding | logo, favicon, OG; city picker (localStorage); "This week" / "High demand" rails; share; similar events; footer; help; terms; error/404 in chrome | — | 24 |
+| Post-booking, account, organizer suite | notifications bell; `/account` with change-password; ticket actions (calendar `.ics`, print, share); bookings upcoming/past; organizer per-event page (revenue by day, orders, edit, assign scanners); wizard venues | `GET /notifications` **now requires auth and ignores `userId`** (it took any user's id unauthenticated before); `POST /auth/change-password` (revokes other families, keeps this session); `GET /internal/users/by-email`; `GET /venues`; `POST /events/:id/scanners`; `GET /orders/events/:id/sales` and `/orders` for the grant-holding organizer | 11 + 13 |
+
+Deliberately **not** built, per PRD §2: cancel-booking (tiered cancellation/refund rules are a
+non-goal, and it would span refund + seat release across three services) and forgot-password (no
+email deliverability infrastructure; a reset link with nowhere to send it is a backdoor).
+
+Gate at the end of the fourth round: `pnpm test` → **186 passed (37 files)**; repo typecheck and
+lint clean; web build 16 routes.
+
 ---
 
 ## PHASE 6b VERIFICATION REPORT — the Next.js app

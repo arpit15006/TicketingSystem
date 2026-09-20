@@ -11,6 +11,7 @@ import {
   MenuIcon,
   ScanLineIcon,
   TicketsIcon,
+  UserIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -30,6 +31,7 @@ import { Separator } from "@/components/ui/separator"
 import { Wordmark } from "@/components/logo"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { SearchCommand } from "@/components/search-command"
+import { NotificationsBell } from "@/components/notifications-bell"
 import {
   hasRole,
   isPlatformAdmin,
@@ -108,7 +110,7 @@ export function SiteHeader() {
   ].filter((l) => l.show)
 
   return (
-    <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur">
+    <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur print:hidden">
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-4">
         <Link href="/" className="shrink-0">
           <Wordmark className="text-lg" />
@@ -128,6 +130,7 @@ export function SiteHeader() {
               </Link>
             </Button>
           ))}
+          <NotificationsBell />
           <ThemeToggle />
         </nav>
 
@@ -157,6 +160,12 @@ export function SiteHeader() {
                   <Link href="/bookings">
                     <TicketsIcon className="size-4" />
                     My bookings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/account">
+                    <UserIcon className="size-4" />
+                    Account
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />

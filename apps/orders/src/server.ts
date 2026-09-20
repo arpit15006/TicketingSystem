@@ -388,6 +388,102 @@ export async function buildServer(options: BuildServerOptions): Promise<OrdersSe
     },
   );
 
+  /* ------------------------------------------------ organizer: event sales */
+
+  /**
+   * What an event has earned. Money lives here, seat counts live in reservation;
+   * the dashboard shows both and never conflates them. Authorized by the
+   * `organizer:event:<id>` grant creation issued (or platform_admin) — orders
+   * cannot resolve ownership, so it asks for the grant, as reservation does.
+   */
+  const organizerOfEvent = requirePermission('event:update', (req) => ({
+    resourceId: (req.params as { eventId: string }).eventId,
+  }));
+
+  app.get(
+    '/orders/events/:eventId/sales',
+    { schema: { params: Type.Object({ eventId: UUID }) }, preHandler: organizerOfEvent },
+    async (req) => {
+      const { eventId } = req.params;
+      const totals = await pool.query<{
+        revenue_paise: string | null;
+        confirmed: string;
+        pending: string;
+        compensated: string;
+        tickets: string;
+        scanned: string;
+      }>(
+        `SELECT
+           coalesce(sum(o.amount_paise) FILTER (WHERE o.status = 'confirmed'), 0) AS revenue_paise,
+           count(*) FILTER (WHERE o.status = 'confirmed') AS confirmed,
+           count(*) FILTER (WHERE o.status IN ('created','awaiting_payment','payment_authorized')) AS pending,
+           count(*) FILTER (WHERE o.status IN ('compensating','refunded_seat_lost')) AS compensated,
+           (SELECT count(*) FROM tickets t JOIN orders x ON x.order_id = t.order_id WHERE x.event_id = $1) AS tickets,
+           (SELECT count(*) FROM tickets t JOIN orders x ON x.order_id = t.order_id WHERE x.event_id = $1 AND t.scanned_at IS NOT NULL) AS scanned
+         FROM orders o WHERE o.event_id = $1`,
+        [eventId],
+      );
+      const byDay = await pool.query<{ day: string; orders: string; revenue_paise: string }>(
+        `SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
+                count(*) AS orders, coalesce(sum(amount_paise), 0) AS revenue_paise
+         FROM orders WHERE event_id = $1 AND status = 'confirmed'
+         GROUP BY 1 ORDER BY 1`,
+        [eventId],
+      );
+      const t = totals.rows[0];
+      return {
+        eventId,
+        revenuePaise: Number(t?.revenue_paise ?? 0),
+        confirmedOrders: Number(t?.confirmed ?? 0),
+        pendingOrders: Number(t?.pending ?? 0),
+        compensatedOrders: Number(t?.compensated ?? 0),
+        ticketsIssued: Number(t?.tickets ?? 0),
+        ticketsScanned: Number(t?.scanned ?? 0),
+        byDay: byDay.rows.map((r) => ({ day: r.day, orders: Number(r.orders), revenuePaise: Number(r.revenue_paise) })),
+      };
+    },
+  );
+
+  /**
+   * The attendee list, as much of it as this service honestly knows: orders own
+   * a user id, not a name — names live in identity and are not this service's to
+   * hand out. The scanner state per order is what a gate manager needs anyway.
+   */
+  app.get(
+    '/orders/events/:eventId/orders',
+    {
+      schema: {
+        params: Type.Object({ eventId: UUID }),
+        querystring: Type.Object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })) }),
+      },
+      preHandler: organizerOfEvent,
+    },
+    async (req) => {
+      const rows = await pool.query<{
+        order_id: string; user_id: string; seat_ids: string[]; amount_paise: string; status: string; created_at: Date;
+        ticket_count: string; scanned_count: string;
+      }>(
+        `SELECT o.order_id, o.user_id, o.seat_ids, o.amount_paise, o.status, o.created_at,
+                (SELECT count(*) FROM tickets t WHERE t.order_id = o.order_id) AS ticket_count,
+                (SELECT count(*) FROM tickets t WHERE t.order_id = o.order_id AND t.scanned_at IS NOT NULL) AS scanned_count
+         FROM orders o WHERE o.event_id = $1 ORDER BY o.created_at DESC LIMIT $2`,
+        [req.params.eventId, req.query.limit ?? 200],
+      );
+      return {
+        orders: rows.rows.map((r) => ({
+          orderId: r.order_id,
+          userId: r.user_id,
+          seatCount: r.seat_ids.length,
+          amountPaise: Number(r.amount_paise),
+          status: r.status,
+          createdAt: r.created_at.toISOString(),
+          ticketCount: Number(r.ticket_count),
+          scannedCount: Number(r.scanned_count),
+        })),
+      };
+    },
+  );
+
   /* ---------------------------------------------------------------- GET /orders */
 
   /**

@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Logger } from 'pino';
 import type { Pool } from 'pg';
 import { createLogger } from '@ticketing/logger';
-import { requestIdPlugin, errorHandlerPlugin } from '@ticketing/http';
+import { requestIdPlugin, errorHandlerPlugin, authPlugin, requireAuth } from '@ticketing/http';
 import type { Config } from './config.js';
 
 export type NotificationServer = FastifyInstance<
@@ -28,6 +28,11 @@ export async function buildServer({ config, pool }: { config: Config; pool: Pool
 
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
+  await app.register(authPlugin, {
+    jwksUri: config.jwksUri,
+    issuer: config.jwtIssuer,
+    audience: config.jwtAudience,
+  });
 
   app.get('/healthz', async () => ({ status: 'ok', service: 'notification' }));
   app.get('/readyz', async (_req, reply) => {
@@ -39,22 +44,24 @@ export async function buildServer({ config, pool }: { config: Config; pool: Pool
     }
   });
 
+  /**
+   * The caller's own notifications, and nobody else's.
+   *
+   * The first version took `userId` as a query parameter with no authentication
+   * at all — anyone could read anyone's order confirmations by guessing an id.
+   * The filter is now the verified subject of the token (ADR-010): there is no
+   * request shape that names another user.
+   */
   app.get('/notifications', async (req) => {
-    const { userId, limit } = req.query as { userId?: string; limit?: string };
-    const max = Math.min(Number(limit ?? 50), 200);
+    const auth = requireAuth(req);
+    const { limit } = req.query as { limit?: string };
+    const max = Math.min(Number(limit ?? 50) || 50, 200);
 
-    const rows = userId === undefined
-      ? await pool.query(
-          `SELECT notification_id, event_id, user_id, kind, subject, body, request_id, delivered_at
-           FROM notifications ORDER BY created_at DESC LIMIT $1`,
-          [max],
-        )
-      : await pool.query(
-          `SELECT notification_id, event_id, user_id, kind, subject, body, request_id, delivered_at
-           FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
-          [userId, max],
-        );
-
+    const rows = await pool.query(
+      `SELECT notification_id, event_id, kind, subject, body, request_id, delivered_at, created_at
+       FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [auth.userId, max],
+    );
     return { notifications: rows.rows };
   });
 

@@ -532,6 +532,13 @@ first real payment fails with "Authentication failed" from Razorpay.
 | `scanner` | `scanner@demo.test` | scoped to seven events; refused on any other |
 | `attendee` | `attendee@demo.test` | hold → pay → ticket |
 
+The storefront (`pnpm dev:web`, http://localhost:3007) covers the whole journey: browse by city and
+category, seatmap with zoom and "best available", hold with a live countdown, Razorpay checkout,
+QR tickets under **My bookings**, an in-app inbox for what the platform would have emailed, an
+organizer workspace (live sales, per-event revenue and orders, edit, assign gate scanners, a
+six-step create wizard), a handheld/camera gate scanner, and **/proof** — a button that fires up
+to 300 concurrent hold requests at a handful of seats and counts every outcome.
+
 The eight events cover every state the UI has to handle: six on sale (one with the **waiting room**
 enabled), one published-but-not-yet-on-sale (holding is refused with `EVENT_NOT_ON_SALE`), one
 draft (visible only on the organizer dashboard). `Demo On-Sale Event` keeps exactly 5,000 seats
