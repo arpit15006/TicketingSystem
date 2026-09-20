@@ -17,6 +17,8 @@ export interface Config {
   /** Empty disables seatmap caching entirely; reads then always hit Postgres. */
   redisUrl: string;
   seatmapCacheTtlSeconds: number;
+  identityUrl: string;
+  internalServiceToken: string;
   logLevel: string;
   nodeEnv: string;
 }
@@ -36,6 +38,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     redisUrl: process.env['REDIS_URL'] ?? '',
     // ADR-006 — a seatmap may be seconds stale; an allocation may not be stale at all.
     seatmapCacheTtlSeconds: int('SEATMAP_CACHE_TTL_SECONDS', 5),
+    identityUrl: process.env['IDENTITY_URL'] ?? 'http://localhost:3001',
+    internalServiceToken: process.env['INTERNAL_SERVICE_TOKEN'] ?? 'dev-internal-service-token-change-me',
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',
     ...overrides,

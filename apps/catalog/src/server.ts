@@ -14,8 +14,10 @@ import {
   requireAuth,
   AppError,
   withRedisFallback,
+  withTransaction,
   type ResourceContext,
 } from '@ticketing/http';
+import { createIdentityClient, type IdentityClient } from './identity-client.js';
 import { ErrorCode } from '@ticketing/contracts';
 import type { Config } from './config.js';
 
@@ -34,9 +36,13 @@ export interface BuildServerOptions {
   pool: Pool;
   /** Optional: seatmap read cache. Absent or broken simply means slower reads. */
   redis?: Redis | null;
+  /** Injected by tests; production builds one from config. */
+  identity?: IdentityClient;
 }
 
-export async function buildServer({ config, pool, redis = null }: BuildServerOptions): Promise<CatalogServer> {
+export async function buildServer({ config, pool, redis = null, identity }: BuildServerOptions): Promise<CatalogServer> {
+  const identityClient: IdentityClient =
+    identity ?? createIdentityClient({ baseUrl: config.identityUrl, serviceToken: config.internalServiceToken });
   const app = Fastify({
     loggerInstance: createLogger({ service: 'catalog', level: config.logLevel, pretty: config.nodeEnv === 'development' }),
     genReqId: (req) => {
@@ -107,6 +113,34 @@ export async function buildServer({ config, pool, redis = null }: BuildServerOpt
     price_paise: Number(row.price_paise),
   });
 
+  interface ListedEventRow {
+    event_id: string;
+    venue_id: string;
+    organizer_id: string;
+    title: string;
+    status: string;
+    starts_at: Date;
+    onsale_at: Date | null;
+    waiting_room_enabled: boolean;
+    venue_name: string;
+    venue_city: string;
+    /** BIGINT → string on the wire; normalised in asListedEvent. Null with no tiers. */
+    min_price_paise: string | null;
+  }
+
+  const LIST_EVENTS_SQL = `
+    SELECT e.event_id, e.venue_id, e.organizer_id, e.title, e.status, e.starts_at, e.onsale_at,
+           e.waiting_room_enabled,
+           v.name AS venue_name, v.city AS venue_city,
+           (SELECT min(t.price_paise) FROM seat_tiers t WHERE t.event_id = e.event_id) AS min_price_paise
+    FROM events e
+    JOIN venues v ON v.venue_id = e.venue_id`;
+
+  const asListedEvent = (row: ListedEventRow) => ({
+    ...row,
+    min_price_paise: row.min_price_paise === null ? null : Number(row.min_price_paise),
+  });
+
   /* --------------------------------------------------------------- venues */
 
   app.post(
@@ -121,12 +155,31 @@ export async function buildServer({ config, pool, redis = null }: BuildServerOpt
       preHandler: requirePermission('venue:create'),
     },
     async (req, reply) => {
+      const auth = requireAuth(req);
       const { name, address, city } = req.body;
-      const inserted = await pool.query(
-        `INSERT INTO venues (name, address, city) VALUES ($1, $2, $3) RETURNING venue_id, name, address, city`,
-        [name, address, city],
-      );
-      return reply.status(201).send(inserted.rows[0]);
+
+      /*
+       * The creator becomes `venue_admin` of the venue they just made, or the
+       * venue is not made at all. Seatmap sections are venue-scoped (PRD §9.2),
+       * so without the grant the person who created the venue cannot lay out a
+       * single seat in it. The grant is requested inside the transaction: if
+       * identity refuses or is down, the INSERT rolls back and the caller gets
+       * an error rather than a venue they cannot use.
+       */
+      const venue = await withTransaction(pool, async (client) => {
+        const inserted = await client.query<{ venue_id: string; name: string; address: string; city: string }>(
+          `INSERT INTO venues (name, address, city) VALUES ($1, $2, $3) RETURNING venue_id, name, address, city`,
+          [name, address, city],
+        );
+        const row = inserted.rows[0];
+        if (row === undefined) throw new Error('venue insert returned no row');
+        await identityClient.grant(
+          { userId: auth.userId, role: 'venue_admin', resourceType: 'venue', resourceId: row.venue_id },
+          req.requestId,
+        );
+        return row;
+      });
+      return reply.status(201).send(venue);
     },
   );
 
@@ -164,23 +217,39 @@ export async function buildServer({ config, pool, redis = null }: BuildServerOpt
       const auth = requireAuth(req);
       const body = req.body;
 
-      const inserted = await pool.query(
-        `INSERT INTO events (venue_id, organizer_id, title, description, starts_at, onsale_at, waiting_room_enabled, hold_duration_seconds)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING event_id, venue_id, organizer_id, title, description, status, starts_at, onsale_at,
-                   waiting_room_enabled, hold_duration_seconds`,
-        [
-          body.venueId,
-          auth.userId,
-          body.title,
-          body.description ?? '',
-          body.startsAt,
-          body.onsaleAt ?? null,
-          body.waitingRoomEnabled ?? false,
-          body.holdDurationSeconds ?? 480,
-        ],
-      );
-      return reply.status(201).send(inserted.rows[0]);
+      /*
+       * The creator becomes `organizer` of this specific event, in the same
+       * transaction. Catalog can check ownership from `organizer_id` itself, but
+       * reservation cannot see this table (ADR-004) and authorizes seat
+       * provisioning by an explicit `organizer:event:<id>` grant — so an event
+       * with no grant is an event whose organizer cannot put seats on sale.
+       */
+      const event = await withTransaction(pool, async (client) => {
+        const inserted = await client.query<{ event_id: string }>(
+          `INSERT INTO events (venue_id, organizer_id, title, description, starts_at, onsale_at, waiting_room_enabled, hold_duration_seconds)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING event_id, venue_id, organizer_id, title, description, status, starts_at, onsale_at,
+                     waiting_room_enabled, hold_duration_seconds`,
+          [
+            body.venueId,
+            auth.userId,
+            body.title,
+            body.description ?? '',
+            body.startsAt,
+            body.onsaleAt ?? null,
+            body.waitingRoomEnabled ?? false,
+            body.holdDurationSeconds ?? 480,
+          ],
+        );
+        const row = inserted.rows[0];
+        if (row === undefined) throw new Error('event insert returned no row');
+        await identityClient.grant(
+          { userId: auth.userId, role: 'organizer', resourceType: 'event', resourceId: row.event_id },
+          req.requestId,
+        );
+        return row;
+      });
+      return reply.status(201).send(event);
     },
   );
 
@@ -197,20 +266,38 @@ export async function buildServer({ config, pool, redis = null }: BuildServerOpt
     },
     async (req) => {
       const { status, limit } = req.query;
+      // A listing card needs the venue and an entry price without N+1 detail
+      // calls. Both are catalog's own tables, so one query answers it.
       const rows = status === undefined
-        ? await pool.query(
-            `SELECT event_id, venue_id, title, status, starts_at, onsale_at, waiting_room_enabled
-             FROM events WHERE status IN ('published','onsale') ORDER BY starts_at LIMIT $1`,
+        ? await pool.query<ListedEventRow>(
+            `${LIST_EVENTS_SQL} WHERE e.status IN ('published','onsale') ORDER BY e.starts_at LIMIT $1`,
             [limit ?? 50],
           )
-        : await pool.query(
-            `SELECT event_id, venue_id, title, status, starts_at, onsale_at, waiting_room_enabled
-             FROM events WHERE status = $1 ORDER BY starts_at LIMIT $2`,
+        : await pool.query<ListedEventRow>(
+            `${LIST_EVENTS_SQL} WHERE e.status = $1 ORDER BY e.starts_at LIMIT $2`,
             [status, limit ?? 50],
           );
-      return { events: rows.rows };
+      return { events: rows.rows.map(asListedEvent) };
     },
   );
+
+  /**
+   * The organizer dashboard. Drafts are invisible to the public listing by
+   * design, so an organizer needs a view of their own events that includes them.
+   * Ownership is `organizer_id`, a fact this service holds; a co-organizer
+   * holding an `organizer:event:<id>` grant sees those events too.
+   */
+  app.get('/events/mine', async (req) => {
+    const auth = requireAuth(req);
+    const granted = auth.roles
+      .filter((g) => g.role === 'organizer' && g.resourceType === 'event' && g.resourceId !== null)
+      .map((g) => g.resourceId as string);
+    const rows = await pool.query<ListedEventRow>(
+      `${LIST_EVENTS_SQL} WHERE e.organizer_id = $1 OR e.event_id = ANY($2::uuid[]) ORDER BY e.starts_at DESC LIMIT 200`,
+      [auth.userId, granted],
+    );
+    return { events: rows.rows.map(asListedEvent) };
+  });
 
   app.get('/events/:eventId', { schema: { params: Type.Object({ eventId: UUID }) } }, async (req) => {
     const found = await pool.query(

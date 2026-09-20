@@ -9,6 +9,7 @@ import { createInMemoryDenylist } from '../src/denylist.js';
 import { buildServer, type IdentityServer } from '../src/server.js';
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations', import.meta.url));
+export const TEST_SERVICE_TOKEN = 'test-internal-service-token';
 
 export interface Harness {
   app: IdentityServer;
@@ -18,6 +19,8 @@ export interface Harness {
   post: (path: string, body: unknown, headers?: Record<string, string>) => Promise<{ status: number; body: any }>;
   get: (path: string, headers?: Record<string, string>) => Promise<{ status: number; body: any }>;
   register: (email?: string) => Promise<{ userId: string; accessToken: string; refreshToken: string; email: string; password: string }>;
+  /** Header proving a caller is another service — for the internal grant route. */
+  serviceHeaders: Record<string, string>;
   stop: () => Promise<void>;
 }
 
@@ -30,6 +33,7 @@ export async function startHarness(overrides: { accessTokenTtlSeconds?: number }
     databaseUrl: db.url,
     nodeEnv: 'test',
     logLevel: 'silent',
+    internalServiceToken: TEST_SERVICE_TOKEN,
     ...(overrides.accessTokenTtlSeconds === undefined ? {} : { accessTokenTtlSeconds: overrides.accessTokenTtlSeconds }),
   });
 
@@ -65,6 +69,7 @@ export async function startHarness(overrides: { accessTokenTtlSeconds?: number }
     baseUrl,
     post,
     get,
+    serviceHeaders: { 'x-internal-token': TEST_SERVICE_TOKEN },
     register: async (email?: string) => {
       counter += 1;
       const address = email ?? `user${counter}.${Date.now()}@example.com`;

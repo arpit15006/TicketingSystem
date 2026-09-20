@@ -11,6 +11,7 @@ import {
   authPlugin,
   requirePermission,
   requireAuth,
+  requireServiceToken,
   withTransaction,
   AppError,
   PgError,
@@ -291,6 +292,52 @@ export async function buildServer({ config, pool, keys, denylist }: BuildServerO
       );
 
       req.log.info({ grantedTo: req.params.userId, role, resourceType, resourceId }, 'role granted');
+      return reply.status(201).send({ userId: req.params.userId, roles: await loadRoles(pool, req.params.userId) });
+    },
+  );
+
+  /* --------------------------------------------- internal role grants */
+
+  /**
+   * How a resource-scoped grant comes into existence without a human admin.
+   *
+   * PRD §9.2 scopes `organizer` to "events they own" and `venue_admin` to "venues
+   * they administer". Ownership is a fact catalog holds, but grants live here, and
+   * reservation — which cannot see catalog's tables (ADR-004) — authorizes seat
+   * provisioning by an explicit `organizer:event:<id>` grant. Without this route
+   * the only way to get one is a platform admin typing it in, and an organizer who
+   * has just created an event cannot provision its seats.
+   *
+   * So catalog, the service that *knows* who created the event, tells identity,
+   * the service that *stores* grants — over service auth, not by sharing a table.
+   * The route accepts only the two scoped roles this handoff needs; a service
+   * token must never be able to mint `platform_admin`.
+   */
+  app.post(
+    '/internal/users/:userId/roles',
+    {
+      schema: {
+        params: Type.Object({ userId: Type.String({ format: 'uuid' }) }),
+        body: Type.Object(
+          {
+            role: Type.Union([Type.Literal('organizer'), Type.Literal('venue_admin'), Type.Literal('scanner')]),
+            resourceType: Type.Union([Type.Literal('event'), Type.Literal('venue')]),
+            resourceId: Type.String({ format: 'uuid' }),
+          },
+          { additionalProperties: false },
+        ),
+      },
+      preHandler: requireServiceToken(config.internalServiceToken),
+    },
+    async (req, reply) => {
+      const { role, resourceType, resourceId } = req.body;
+      await pool.query(
+        `INSERT INTO role_assignments (user_id, role, resource_type, resource_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING`,
+        [req.params.userId, role, resourceType, resourceId],
+      );
+      req.log.info({ grantedTo: req.params.userId, role, resourceType, resourceId, via: 'service' }, 'role granted');
       return reply.status(201).send({ userId: req.params.userId, roles: await loadRoles(pool, req.params.userId) });
     },
   );

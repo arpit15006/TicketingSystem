@@ -105,6 +105,7 @@ export async function holdSeats(stack: Stack, args: { eventId: string; token: st
 export interface PlacedOrder {
   orderId: string;
   razorpayOrderId: string;
+  razorpayKeyId: string;
   amountPaise: number;
 }
 

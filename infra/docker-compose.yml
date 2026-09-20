@@ -29,6 +29,7 @@ x-service-base: &service-base
     ADMISSION_TOKEN_SECRET: ${ADMISSION_TOKEN_SECRET:-dev-admission-secret-change-me}
     KAFKA_BROKERS: redpanda:9092
     REDIS_URL: redis://redis:6379
+    IDENTITY_URL: http://identity:3001
     CATALOG_URL: http://catalog:3002
     RESERVATION_URL: http://reservation:3003
 

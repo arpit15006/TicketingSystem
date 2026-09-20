@@ -122,6 +122,7 @@ export interface SeatReleasedPayload {
 export const ErrorCode = {
   validationFailed: 'VALIDATION_FAILED',
   seatsUnavailable: 'SEATS_UNAVAILABLE',
+  eventNotOnSale: 'EVENT_NOT_ON_SALE',
   holdNotFound: 'HOLD_NOT_FOUND',
   holdNotActive: 'HOLD_NOT_ACTIVE',
   seatLost: 'SEAT_LOST',

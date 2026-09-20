@@ -46,6 +46,8 @@ export interface Config {
   bootstrapAdminEmail: string | undefined;
   /** Empty disables the shared denylist and falls back to the in-process one. */
   redisUrl: string;
+  /** Proves a caller is another service (catalog granting a resource role). */
+  internalServiceToken: string;
   logLevel: string;
   nodeEnv: string;
 }
@@ -68,6 +70,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     keyId: optional('JWT_KEY_ID'),
     bootstrapAdminEmail: optional('BOOTSTRAP_ADMIN_EMAIL'),
     redisUrl: process.env['REDIS_URL'] ?? '',
+    internalServiceToken: process.env['INTERNAL_SERVICE_TOKEN'] ?? 'dev-internal-service-token-change-me',
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',
     ...overrides,

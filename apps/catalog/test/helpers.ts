@@ -6,6 +6,7 @@ import { createTestDatabase, startTestIdentity, type TestDatabase, type TestIden
 import type { RoleGrant } from '@ticketing/contracts';
 import { loadConfig } from '../src/config.js';
 import { buildServer, type CatalogServer } from '../src/server.js';
+import type { IdentityClient } from '../src/identity-client.js';
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations', import.meta.url));
 
@@ -15,6 +16,10 @@ export interface Harness {
   db: TestDatabase;
   baseUrl: string;
   identity: TestIdentity;
+  /** Every grant catalog asked identity for, in order. */
+  grants: { userId: string; role: string; resourceType: string; resourceId: string }[];
+  /** Make the next grant call fail, to prove creation rolls back with it. */
+  failNextGrant: () => void;
   as: (roles: RoleGrant[], userId?: string) => Promise<Record<string, string>>;
   request: (
     method: string,
@@ -38,7 +43,27 @@ export async function startHarness(): Promise<Harness> {
   });
 
   const pool = createPool({ databaseUrl: db.url, max: 10 });
-  const app = await buildServer({ config, pool });
+
+  /*
+   * The real client would call identity over HTTP. Here it is replaced by one
+   * that records what catalog asked for, so tests can assert that creating an
+   * event or a venue produced exactly the grant PRD §9.2 requires — and can make
+   * the grant fail to prove the INSERT rolls back with it.
+   */
+  const grants: Harness['grants'] = [];
+  let failNext = false;
+  const fakeIdentity: IdentityClient = {
+    grant: async (args) => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('identity unavailable (simulated)');
+      }
+      grants.push(args);
+      return [{ role: args.role, resourceType: args.resourceType, resourceId: args.resourceId }];
+    },
+  };
+
+  const app = await buildServer({ config, pool, identity: fakeIdentity });
 
   await app.listen({ port: 0, host: '127.0.0.1' });
   const address = app.server.address();
@@ -51,6 +76,10 @@ export async function startHarness(): Promise<Harness> {
     db,
     baseUrl,
     identity,
+    grants,
+    failNextGrant: () => {
+      failNext = true;
+    },
     as: async (roles, userId) => ({
       authorization: `Bearer ${await identity.mint({ roles, ...(userId === undefined ? {} : { userId }) })}`,
     }),

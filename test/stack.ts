@@ -111,6 +111,9 @@ export async function startStack(): Promise<Stack> {
     nodeEnv: 'test',
     logLevel: 'silent',
     bootstrapAdminEmail,
+    // Catalog grants organizer:event / venue_admin:venue through the internal
+    // route; both sides must hold the same secret for that to work here.
+    internalServiceToken: TEST_SERVICE_TOKEN,
   });
   const identityPool = createPool({ databaseUrl: identityDb.url, max: 10 });
   const keys = await loadSigningKeys(identityConfig);
@@ -140,6 +143,10 @@ export async function startStack(): Promise<Stack> {
       redisUrl: redis.url,
       // Short enough that tests observe fresh data, long enough to prove caching.
       seatmapCacheTtlSeconds: 2,
+      // The real handoff: catalog → identity's internal grant route, over the
+      // same service token identity was started with.
+      identityUrl,
+      internalServiceToken: TEST_SERVICE_TOKEN,
       ...jwt,
     }),
     pool: catalogPool,

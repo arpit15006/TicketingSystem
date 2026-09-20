@@ -5,6 +5,13 @@ export interface EventPolicy {
   allocationMode: AllocationMode;
   routeId: string | null;
   stopCount: number;
+  /**
+   * Catalog's word on whether the event is selling. `null` means catalog did not
+   * say — unreachable, or an older response without the field — and the caller
+   * must treat that as "allow": the status gate is sales policy, not seat
+   * correctness, and a catalog outage must not stop a sale (INV-7's spirit).
+   */
+  status: 'draft' | 'published' | 'onsale' | 'closed' | null;
 }
 
 interface Cached {
@@ -32,6 +39,7 @@ export function createEventPolicyLoader(options: { catalogUrl: string; cacheMs?:
     allocationMode: 'whole',
     routeId: null,
     stopCount: 0,
+    status: null,
   };
 
   return async function loadPolicy(eventId: string, requestId: string): Promise<EventPolicy> {
@@ -50,6 +58,7 @@ export function createEventPolicyLoader(options: { catalogUrl: string; cacheMs?:
         allocation_mode?: string;
         route_id?: string | null;
         stops?: unknown[];
+        status?: string;
       };
 
       const policy: EventPolicy = {
@@ -57,6 +66,10 @@ export function createEventPolicyLoader(options: { catalogUrl: string; cacheMs?:
         allocationMode: body.allocation_mode === 'segmented' ? 'segmented' : 'whole',
         routeId: body.route_id ?? null,
         stopCount: Array.isArray(body.stops) ? body.stops.length : 0,
+        status:
+          body.status === 'draft' || body.status === 'published' || body.status === 'onsale' || body.status === 'closed'
+            ? body.status
+            : null,
       };
 
       cache.set(eventId, { policy, expiresAt: Date.now() + cacheMs });

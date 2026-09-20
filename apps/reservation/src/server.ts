@@ -246,6 +246,23 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
     const policy = await loadPolicy(body.eventId, req.requestId);
     const allocator = allocatorFor(policy.allocationMode);
 
+    /*
+     * Seats are for sale only while catalog says the event is on sale.
+     *
+     * Without this, anyone with a token could hold — and, through orders, buy —
+     * seats on a draft or not-yet-on-sale event by calling the API directly; the
+     * on-sale moment would be a suggestion the UI happened to follow. The check
+     * fails OPEN when catalog cannot be reached (`status: null`): it is sales
+     * policy, not allocation correctness, and INV-7's spirit is that a dependency
+     * outage never turns into a closed door for buyers.
+     */
+    if (policy.status !== null && policy.status !== 'onsale') {
+      throw new AppError(409, ErrorCode.eventNotOnSale, 'This event is not on sale', {
+        eventId: body.eventId,
+        status: policy.status,
+      });
+    }
+
     // PRD §12 — checked before any seat work. Fails open on every infrastructure
     // failure: the waiting room shapes traffic, it does not protect a seat.
     if (config.waitingRoomEnforcementEnabled) {

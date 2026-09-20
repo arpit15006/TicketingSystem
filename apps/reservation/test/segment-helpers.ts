@@ -9,12 +9,15 @@ import type { Pool } from 'pg';
  */
 export interface FakeCatalog {
   url: string;
-  setEvent: (eventId: string, policy: { allocationMode: 'whole' | 'segmented'; waitingRoomEnabled?: boolean }) => void;
+  setEvent: (
+    eventId: string,
+    policy: { allocationMode: 'whole' | 'segmented'; waitingRoomEnabled?: boolean; status?: string },
+  ) => void;
   stop: () => Promise<void>;
 }
 
 export async function startFakeCatalog(): Promise<FakeCatalog> {
-  const events = new Map<string, { allocation_mode: string; waiting_room_enabled: boolean }>();
+  const events = new Map<string, { allocation_mode: string; waiting_room_enabled: boolean; status?: string }>();
 
   const server: Server = createServer((req, res) => {
     const match = /^\/events\/([0-9a-f-]{36})/.exec(req.url ?? '');
@@ -41,6 +44,7 @@ export async function startFakeCatalog(): Promise<FakeCatalog> {
       void events.set(eventId, {
         allocation_mode: policy.allocationMode,
         waiting_room_enabled: policy.waitingRoomEnabled ?? false,
+        ...(policy.status === undefined ? {} : { status: policy.status }),
       }),
     stop: async () => {
       await new Promise<void>((resolve, reject) =>
