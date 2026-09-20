@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
-import { api } from "./api"
+import { api, forceRefresh } from "./api"
 import type { AuthResult, CurrentUser, Role } from "./api-types"
 import {
   clearTokens,
@@ -100,12 +100,22 @@ export function useSession(): Session {
   }
 }
 
-/** Invalidate the cached session after a login, logout or role change. */
+/**
+ * Re-read the session after a login or a role change. `resetQueries` rather than
+ * `invalidateQueries`: invalidation keeps the old data on screen while refetching,
+ * which after a logout leaves the previous user's name in the header until the
+ * (now disabled) query notices. Reset drops it immediately.
+ */
 export function useRefreshSession(): () => void {
   const client = useQueryClient()
   return React.useCallback(() => {
-    void client.invalidateQueries({ queryKey: SESSION_QUERY_KEY })
+    void client.resetQueries({ queryKey: SESSION_QUERY_KEY })
   }, [client])
+}
+
+/** Rotate the token so a grant issued a moment ago is in the roles claim. */
+export async function pickUpNewGrants(): Promise<void> {
+  await forceRefresh()
 }
 
 /* ───────────────────────────── role helpers ──────────────────────────────── */

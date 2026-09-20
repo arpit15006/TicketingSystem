@@ -58,15 +58,28 @@ export interface CurrentUser {
 
 export type EventStatus = "draft" | "published" | "onsale" | "closed"
 
-/** A row from `GET /catalog/events` — note the snake_case; catalog returns rows. */
+/** A row from `GET /catalog/events` and `/events/mine` — snake_case; catalog returns rows. */
 export interface EventSummary {
   event_id: string
   venue_id: string
+  organizer_id: string
   title: string
   status: EventStatus
   starts_at: string
   onsale_at: string | null
   waiting_room_enabled: boolean
+  venue_name: string
+  venue_city: string
+  /** Cheapest tier, for "from ₹X". Null until a tier exists. */
+  min_price_paise: number | null
+}
+
+/** `POST /catalog/venues` and the venue block on a detail page. */
+export interface Venue {
+  venue_id: string
+  name: string
+  address: string
+  city: string
 }
 
 export interface SeatTier {

@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Spinner } from "@/components/ui/spinner"
 import { ApiError } from "@/lib/api"
-import { login, useRefreshSession } from "@/lib/auth"
+import { login, useRefreshSession, useSession } from "@/lib/auth"
 import { loginSchema, type LoginValues } from "@/lib/schemas"
 
 export function LoginForm() {
@@ -27,6 +27,12 @@ export function LoginForm() {
   const params = useSearchParams()
   const refreshSession = useRefreshSession()
   const [failure, setFailure] = React.useState<ApiError | null>(null)
+
+  // Already signed in? There is nothing to do here.
+  const { isAuthenticated } = useSession()
+  React.useEffect(() => {
+    if (isAuthenticated) router.replace("/")
+  }, [isAuthenticated, router])
 
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),

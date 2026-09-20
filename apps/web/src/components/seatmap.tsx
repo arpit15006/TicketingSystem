@@ -27,6 +27,23 @@ import { formatPaise } from "@/lib/format"
 
 const SEAT = 14
 const GAP = 4
+
+/**
+ * One colour per tier, assigned in tier order. Static class strings on purpose:
+ * Tailwind only emits classes it can see at build time, so they cannot be
+ * assembled from a hue at runtime.
+ */
+export const TIER_PALETTE = [
+  { seat: "fill-amber-400/30 stroke-amber-500/70 hover:fill-amber-400/60", swatch: "border-amber-500/70 bg-amber-400/30" },
+  { seat: "fill-emerald-500/25 stroke-emerald-500/60 hover:fill-emerald-500/50", swatch: "border-emerald-500/60 bg-emerald-500/25" },
+  { seat: "fill-sky-400/25 stroke-sky-500/60 hover:fill-sky-400/50", swatch: "border-sky-500/60 bg-sky-400/25" },
+  { seat: "fill-violet-400/25 stroke-violet-500/60 hover:fill-violet-400/50", swatch: "border-violet-500/60 bg-violet-400/25" },
+  { seat: "fill-rose-400/25 stroke-rose-500/60 hover:fill-rose-400/50", swatch: "border-rose-500/60 bg-rose-400/25" },
+] as const
+
+export function tierPalette(index: number) {
+  return TIER_PALETTE[index % TIER_PALETTE.length] ?? TIER_PALETTE[0]
+}
 const PITCH = SEAT + GAP
 const ROW_LABEL_WIDTH = 28
 const SECTION_GAP = 36
@@ -72,8 +89,8 @@ export function Seatmap({
   }, [availableSeats])
 
   const tiersById = React.useMemo(() => {
-    const map = new Map<string, SeatTier>()
-    for (const tier of event.tiers) map.set(tier.tier_id, tier)
+    const map = new Map<string, SeatTier & { paletteIndex: number }>()
+    event.tiers.forEach((tier, index) => map.set(tier.tier_id, { ...tier, paletteIndex: index }))
     return map
   }, [event.tiers])
 
@@ -181,7 +198,7 @@ export function Seatmap({
                             ? "fill-muted stroke-border"
                             : isSelected
                               ? "fill-primary stroke-primary cursor-pointer"
-                              : "fill-emerald-500/25 stroke-emerald-500/60 hover:fill-emerald-500/50 cursor-pointer",
+                              : `${tierPalette(tier?.paletteIndex ?? 0).seat} cursor-pointer`,
                           isLost && "fill-destructive/40 stroke-destructive",
                           disabled && !isSelected && "cursor-not-allowed opacity-60"
                         )}
@@ -210,13 +227,16 @@ export function Seatmap({
   )
 }
 
-export function SeatmapLegend() {
+export function SeatmapLegend({ tiers }: { tiers: SeatTier[] }) {
   const swatch = "inline-block size-3 rounded-[3px] border align-middle"
   return (
-    <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-      <span className="flex items-center gap-1.5">
-        <span className={cn(swatch, "border-emerald-500/60 bg-emerald-500/25")} /> Available
-      </span>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+      {tiers.map((tier, index) => (
+        <span key={tier.tier_id} className="flex items-center gap-1.5">
+          <span className={cn(swatch, tierPalette(index).swatch)} />
+          {tier.name} · {formatPaise(tier.price_paise)}
+        </span>
+      ))}
       <span className="flex items-center gap-1.5">
         <span className={cn(swatch, "border-primary bg-primary")} /> Selected
       </span>

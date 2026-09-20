@@ -15,6 +15,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { SearchCommand } from "@/components/search-command"
 import {
   hasRole,
   isPlatformAdmin,
@@ -59,10 +60,11 @@ export function SiteHeader() {
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4">
         <Link href="/" className="flex items-center gap-2 font-semibold">
           <TicketIcon className="size-5" />
-          <span>Ticketing</span>
+          <span className="text-lg tracking-tight">Ticketing</span>
         </Link>
 
         <nav className="ml-auto flex items-center gap-1">
+          <SearchCommand />
           {canOrganize && (
             <Button variant="ghost" size="sm" asChild>
               <Link href="/organizer">

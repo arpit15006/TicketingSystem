@@ -40,6 +40,26 @@ export default function SeatsPage() {
   const { isAuthenticated, isLoading: sessionLoading } = useSession()
 
   const { data: event } = useEvent(eventId)
+
+  /*
+   * PRD §12 — for a waiting-room event, the admission token minted by the queue
+   * is what the gateway and reservation require on /reservations. It was stored
+   * by the queue page; without it the only correct move is back to the queue.
+   */
+  // Read once, lazily: sessionStorage is an external store with no change
+  // events, so mirroring it into state from an effect would only add a render.
+  const [admissionToken] = React.useState<string | null>(() => {
+    if (typeof window === "undefined") return null
+    try {
+      return window.sessionStorage.getItem(`ticketing.admission.${eventId}`)
+    } catch {
+      return null
+    }
+  })
+  React.useEffect(() => {
+    if (event === undefined || !event.waiting_room_enabled) return
+    if (admissionToken === null) router.replace(`/events/${eventId}/queue`)
+  }, [event, eventId, admissionToken, router])
   const { data: availability, isLoading: seatsLoading } = useAvailability(eventId, {
     limit: 5000,
     refetchMs: 8000,
@@ -162,6 +182,7 @@ export default function SeatsPage() {
         seatIds: [...selected],
         // PRD §8.1 — a retried request must not produce a second hold.
         idempotencyKey: crypto.randomUUID(),
+        ...(admissionToken === null ? {} : { admissionToken }),
       })
       setHoldId(hold.holdId)
       setExpiresAt(hold.expiresAt)
@@ -181,6 +202,18 @@ export default function SeatsPage() {
         toast.error("Someone else took those seats", {
           description: `${lost.size} of your ${selected.size} seats went to another buyer.`,
         })
+      } else if (error instanceof ApiError && error.code === "EVENT_NOT_ON_SALE") {
+        toast.error("This event is not on sale yet")
+        router.replace(`/events/${eventId}`)
+      } else if (error instanceof ApiError && error.status === 403) {
+        // Admission expired or was never granted: the queue is the way back in.
+        toast.error("Your queue admission has expired", { description: "Rejoining the queue." })
+        try {
+          sessionStorage.removeItem(`ticketing.admission.${eventId}`)
+        } catch {
+          // nothing stored
+        }
+        router.replace(`/events/${eventId}/queue`)
       } else if (error instanceof ApiError) {
         toast.error(error.message, { description: error.requestId })
       } else {
@@ -277,8 +310,11 @@ export default function SeatsPage() {
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <Card>
           <CardHeader className="gap-3">
-            <CardTitle>Choose your seats</CardTitle>
-            <SeatmapLegend />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle>Choose your seats</CardTitle>
+              <Badge variant="outline">Screen / stage this way ↑</Badge>
+            </div>
+            <SeatmapLegend tiers={event?.tiers ?? []} />
           </CardHeader>
           <CardContent>
             {seatsLoading || event === undefined ? (

@@ -11,14 +11,31 @@ import type {
   SalesSummary,
 } from "./api-types"
 
+const normaliseSummary = (event: EventSummary): EventSummary => ({
+  ...event,
+  min_price_paise: event.min_price_paise === null ? null : toPaise(event.min_price_paise),
+})
+
 export function useEvents(status?: EventStatus): UseQueryResult<EventSummary[]> {
   return useQuery({
     queryKey: ["events", status ?? "all"],
     queryFn: async () => {
-      const query = status === undefined ? "" : `?status=${status}`
+      const query = status === undefined ? "?limit=200" : `?status=${status}&limit=200`
       const result = await api<{ events: EventSummary[] }>(`/catalog/events${query}`)
-      return result.events
+      return result.events.map(normaliseSummary)
     },
+  })
+}
+
+/** The organizer's own events, drafts included. Requires a session. */
+export function useMyEvents(enabled: boolean): UseQueryResult<EventSummary[]> {
+  return useQuery({
+    queryKey: ["events", "mine"],
+    queryFn: async () => {
+      const result = await api<{ events: EventSummary[] }>("/catalog/events/mine")
+      return result.events.map(normaliseSummary)
+    },
+    enabled,
   })
 }
 

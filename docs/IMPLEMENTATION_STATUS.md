@@ -15,7 +15,7 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 | Phase 4 | Kafka + outbox + notification | ✅ VERIFIED |
 | Phase 5 | Waiting room | ✅ VERIFIED |
 | Phase 6a | Frontend enablement (backend) | ✅ VERIFIED |
-| Phase 6b | Frontend (Next.js `apps/web`) | 🔄 IN PROGRESS — started on the user's go-ahead |
+| Phase 6b | Frontend (Next.js `apps/web`) | ✅ VERIFIED — every PRD §13 route, every role exercised in a real browser |
 | Phase 7 | Proof + chaos + load | 🟡 **MOSTLY VERIFIED** — infra, chaos, trace and runbook done; k6 numbers not representative (see report) |
 | Phase 8 | Segmented allocation | ✅ VERIFIED |
 
@@ -752,6 +752,82 @@ status counts  : {"201":50,"409":450}
 - CORS was verified with `inject`, not a real browser.
 
 **Exit criteria**: ✅ met. Phase 6b (the Next.js app) may proceed.
+
+---
+
+## PHASE 6b VERIFICATION REPORT — the Next.js app
+
+Every route in PRD §13 plus `/login`, `/register` and `/organizer/new`. Verified two ways: the
+usual gate (typecheck, lint, build, full suite), and **a real Chrome driven over the DevTools
+Protocol** through every role's complete journey against the live compose stack — real gateway,
+real CORS, real Razorpay test mode. Server-rendered HTML is only skeletons for these pages, so
+`curl` cannot verify them; the browser can.
+
+**What the end-to-end audit found and fixed**
+
+| # | Found | Fix |
+|---|---|---|
+| 1 | A plain `organizer` could create an event but never provision its seats: reservation needs an `organizer:event:<id>` grant that only a platform admin could issue. Same for `venue_admin:venue:<id>` and seatmap sections. | Catalog → identity internal grant route, inside the creating transaction (Phase 6b backend commit) |
+| 2 | Reservation never checked event status: seats on a draft event were holdable via the API | `EVENT_NOT_ON_SALE` gate, failing open when catalog is unreachable |
+| 3 | Basket total collapsed to ₹0 the moment a hold succeeded (priced by looking seats up in `/availability`, which returns only free seats) | Tier travels with the selection |
+| 4 | Every Pay press sent a fresh `Idempotency-Key`, so the second collided with `orders_one_live_per_hold` — 409 while seats sat held | Key derived from the hold; a second press replays |
+| 5 | Checkout re-POSTed `/orders` to recover Razorpay handles after a reload — same collision | `GET /orders/:id` returns the handles |
+| 6 | Seats page never sent the admission token for waiting-room events | Read from the queue's sessionStorage; `/seats` without one bounces to `/queue` |
+| 7 | Organizer dashboard listed only public events, so drafts were invisible to their owner | `GET /catalog/events/mine` |
+| 8 | Listing cards had no venue or price without N+1 calls | Joined into `GET /catalog/events` |
+| 9 | Logout left the previous user's name in the header until the disabled query noticed | `resetQueries` instead of `invalidateQueries` |
+| 10 | `/login` while signed in showed the form | Redirects home |
+| 11 | Compose run without `--env-file` left every secret empty; stack healthy, first payment failed | `pnpm stack:*` scripts carry the flag; header comment explains the trap |
+
+**Screens** — storefront (hero carousel, city + category filters, ⌘K search, cards with venue and
+entry price), event detail (poster band, tiers, venue, FAQ, sticky booking card), **SVG seatmap**
+with per-tier colours and a hold countdown that survives reload, waiting room over SSE with the
+fail-open banner, Razorpay checkout, ticket-style order page with QR codes and the compensation
+message, organizer dashboard (sidebar shell, live stats, inventory chart, events table with
+publish / put-on-sale / provision actions, six-step create wizard), gate scanner with handheld and
+camera input, 404 inside the app chrome.
+
+**Real-browser end-to-end — 55 checks, 55 passed** (`scratchpad/e2e.mjs`, Chrome headless + CDP)
+
+```
+anonymous     12 cards · hero · city/category filters · prices · detail · upcoming disabled
+              · seatmap renders · organizer/scan walls · 404
+attendee      login · 3 seats → ₹36,000 · hold "Held for 8:00" · total survives hold
+              · reload restores hold · Pay → /checkout · Razorpay Checkout opens
+              · waiting room: /seats → /queue → admitted → /seats · hold with admission token
+              · release · not-on-sale hold refused · /login redirects when signed in
+organizer2    (plain organizer) dashboard shows own + draft, not others' · live sales · chart
+              · wizard: all six steps · new event public, on sale, 488 seats provisioned
+scanner       Scan link only · assigned to 7 events · unknown code refused · cannot organize
+admin         both links · sees own events
+sign out      avatar gone · Sign in back · refresh token cleared
+```
+
+**Gate**
+
+```
+pnpm typecheck   → clean (repo + web)
+pnpm lint        → clean (repo + web; 1 React Compiler warning on the RHF wizard)
+next build       → 12 routes
+pnpm test        → 176 passed (32 files)
+pnpm seed        → 4 accounts, 4 venues, 8 events, 11,392 seats — organizer2's three events and
+                   venue created with no admin involved
+```
+
+**Guardrails** — client talks only to the gateway (one base URL, in one file); authorization is
+never decided in the browser (links are offered, every service re-checks); no cookie, no BFF;
+allocation SQL untouched; nothing in the frontend depends on Redis, Kafka or a background job.
+
+**Honest limits**
+- Razorpay Checkout is verified to *open* in test mode; completing a payment needs a human on the
+  card form, so `confirmed` orders and the scanner's happy path (a real QR) were exercised through
+  the API suites (`orders.spec.ts`, `ticket-scan.spec.ts`), not the browser.
+- Events have no image or category in the schema (PRD §2); the poster gradient and category chip
+  are derived from the title.
+- Venues are not listable; the organizer picks from venues their events already reference, or
+  creates one.
+- The E2E driver lives in the session scratchpad, not the repo — it is a verification tool for
+  this environment (hard-coded Chrome path), not a portable test.
 
 ---
 

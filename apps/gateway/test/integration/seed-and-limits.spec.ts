@@ -32,34 +32,81 @@ describe('seed script and gateway rate limiting', () => {
     });
 
     expect(stdout).toContain('seed complete');
-    expect(stdout).toContain('seats     : 5000');
 
-    const seats = await stack.pools.reservation.query<{ count: string }>(`SELECT count(*) FROM seats`);
-    expect(Number(seats.rows[0]?.count)).toBe(5000);
-
-    const available = await stack.pools.reservation.query<{ count: string }>(
-      `SELECT count(*) FROM seats WHERE status = 'available'`,
+    // The load test and the runbook depend on this exact event keeping 5,000 seats.
+    const demo = await stack.pools.catalog.query<{ event_id: string; status: string }>(
+      `SELECT event_id, status FROM events WHERE title = 'Demo On-Sale Event'`,
     );
-    expect(Number(available.rows[0]?.count)).toBe(5000);
+    expect(demo.rows).toHaveLength(1);
+    expect(demo.rows[0]?.status).toBe('onsale');
+    const demoSeats = await stack.pools.reservation.query<{ count: string }>(
+      `SELECT count(*) FROM seats WHERE event_id = $1`,
+      [demo.rows[0]?.event_id],
+    );
+    expect(Number(demoSeats.rows[0]?.count)).toBe(5000);
 
-    const onsale = await stack.pools.catalog.query<{ status: string }>(`SELECT status FROM events`);
-    expect(onsale.rows[0]?.status).toBe('onsale');
+    // Every provisioned seat starts available; nothing is pre-sold or pre-held.
+    const seats = await stack.pools.reservation.query<{ total: string; available: string }>(
+      `SELECT count(*) AS total, count(*) FILTER (WHERE status = 'available') AS available FROM seats`,
+    );
+    expect(seats.rows[0]?.available).toBe(seats.rows[0]?.total);
+    expect(Number(seats.rows[0]?.total)).toBeGreaterThan(5000);
 
-    // Two tiers across two sections, and catalog holds the geometry only.
-    const sections = await stack.pools.catalog.query<{ count: string }>(`SELECT count(*) FROM seatmap_sections`);
-    expect(Number(sections.rows[0]?.count)).toBe(2);
+    // One draft, and it has no inventory: a draft is not for sale.
+    const byStatus = await stack.pools.catalog.query<{ status: string; count: string }>(
+      `SELECT status, count(*) FROM events GROUP BY status`,
+    );
+    const counts = Object.fromEntries(byStatus.rows.map((r) => [r.status, Number(r.count)]));
+    expect(counts['draft']).toBe(1);
+    expect(counts['published']).toBe(1);
+    expect(counts['onsale']).toBe(6);
+
+    /*
+     * The plain organizer's events exist. organizer2@demo.test holds only the
+     * global organizer and venue_admin roles — so this proves the grant chain
+     * (catalog → identity, over service auth) works through the real gateway,
+     * with no admin involved in creating the venue, the event, or its seats.
+     */
+    const sunburn = await stack.pools.catalog.query<{ organizer_id: string }>(
+      `SELECT organizer_id FROM events WHERE title LIKE 'Sunburn%'`,
+    );
+    const organizer2 = await stack.pools.identity.query<{ user_id: string }>(
+      `SELECT user_id FROM users WHERE email = 'organizer2@demo.test'`,
+    );
+    expect(sunburn.rows[0]?.organizer_id).toBe(organizer2.rows[0]?.user_id);
+    const grants = await stack.pools.identity.query<{ role: string; resource_type: string | null }>(
+      `SELECT role, resource_type FROM role_assignments WHERE user_id = $1 ORDER BY role, resource_type`,
+      [organizer2.rows[0]?.user_id],
+    );
+    expect(grants.rows).toContainEqual({ role: 'organizer', resource_type: 'event' });
+    expect(grants.rows).toContainEqual({ role: 'venue_admin', resource_type: 'venue' });
+    expect(grants.rows.some((g) => g.role === 'platform_admin')).toBe(false);
+
+    // The scanner is hired per event (PRD §9.2), never globally.
+    const scanner = await stack.pools.identity.query<{ count: string }>(
+      `SELECT count(*) FROM role_assignments r JOIN users u ON u.user_id = r.user_id
+       WHERE u.email = 'scanner@demo.test' AND r.role = 'scanner' AND r.resource_type = 'event'`,
+    );
+    expect(Number(scanner.rows[0]?.count)).toBe(7);
   }, 240_000);
 
   it('re-running the seed is harmless', async () => {
+    const before = await stack.pools.reservation.query<{ count: string }>(`SELECT count(*) FROM seats`);
+    const eventsBefore = await stack.pools.catalog.query<{ count: string }>(`SELECT count(*) FROM events`);
+
     const { stdout } = await run('node', [SEED_SCRIPT], {
       env: { ...process.env, GATEWAY_URL: stack.gatewayUrl, BOOTSTRAP_ADMIN_EMAIL: stack.bootstrapAdminEmail },
       timeout: 180_000,
     });
-    expect(stdout).toContain('already existed');
+    expect(stdout).toContain('user exists');
+    expect(stdout).toContain('event exists');
+    expect(stdout).not.toContain('event created');
 
-    // A second run must not double the inventory.
-    const seats = await stack.pools.reservation.query<{ count: string }>(`SELECT count(*) FROM seats`);
-    expect(Number(seats.rows[0]?.count)).toBe(5000);
+    // A second run must not double anything.
+    const after = await stack.pools.reservation.query<{ count: string }>(`SELECT count(*) FROM seats`);
+    const eventsAfter = await stack.pools.catalog.query<{ count: string }>(`SELECT count(*) FROM events`);
+    expect(after.rows[0]?.count).toBe(before.rows[0]?.count);
+    expect(eventsAfter.rows[0]?.count).toBe(eventsBefore.rows[0]?.count);
   }, 240_000);
 
   it('rate limits at the edge and says when to retry', async () => {

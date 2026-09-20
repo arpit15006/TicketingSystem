@@ -506,26 +506,46 @@ Requires Node 22+, pnpm, and a Docker daemon.
 
 ```bash
 # The whole system, from a clean checkout
+pnpm install
 pnpm keys:generate >> .env     # stable signing keys, so tokens survive restarts
-docker compose -f infra/docker-compose.yml --env-file .env up -d --wait
-pnpm seed                      # demo organizer, venue, on-sale event, 5,000 seats
+pnpm stack:build               # docker compose --env-file .env up --build --wait
+pnpm seed                      # 4 accounts (every role), 4 venues, 8 events, ~11,000 seats
+pnpm dev:web                   # the storefront on http://localhost:3007
 
 # ...or just the tests
-pnpm install
 pnpm typecheck && pnpm lint && pnpm build
-pnpm test                                        # 32 tests, real PostgreSQL
+pnpm test                                        # 176 tests, real PostgreSQL
 pnpm vitest run --project integration oversell   # the proof, on its own
 ```
+
+`pnpm stack:*` wraps `docker compose -f infra/docker-compose.yml --env-file .env`. The `--env-file`
+flag is not optional: compose resolves `${VAR}` against the directory holding the compose file, so
+without it every secret substitutes to an empty string, the stack still reports healthy, and the
+first real payment fails with "Authentication failed" from Razorpay.
+
+**Demo accounts** (`pnpm seed`; password for the non-admin three is `demo passphrase 12345`):
+
+| Role | Account | Proves |
+|---|---|---|
+| `platform_admin` | `organizer@demo.test` / `demo organizer passphrase` | grants roles, sees everything |
+| `organizer` + `venue_admin` | `organizer2@demo.test` | a **plain** organizer creates a venue, three events and their seats with no admin involved — the catalog → identity grant chain |
+| `scanner` | `scanner@demo.test` | scoped to seven events; refused on any other |
+| `attendee` | `attendee@demo.test` | hold → pay → ticket |
+
+The eight events cover every state the UI has to handle: six on sale (one with the **waiting room**
+enabled), one published-but-not-yet-on-sale (holding is refused with `EVENT_NOT_ON_SALE`), one
+draft (visible only on the organizer dashboard). `Demo On-Sale Event` keeps exactly 5,000 seats
+because the load test and the runbook depend on it.
 
 Integration tests start a real PostgreSQL 16 via Testcontainers; each suite gets its own logical
 database and the service's real migrations are run against it. Nothing about the infrastructure is
 mocked. Where no Docker daemon is reachable the harness falls back to an embedded **real**
 PostgreSQL 16 server, so the suite still runs against a genuine database rather than a fake.
 
-`docker compose up` arrives with Phase 7, per the build order in [`PRD.md`](PRD.md) §16. Once the
-services are running, `pnpm seed` creates a demo organizer, a venue, and an on-sale event with
-**5,000 seats**, entirely through the public API — a seed script holding credentials for three
-databases would be the first crack in database-per-service. It is safe to re-run.
+`pnpm seed` does everything through the public API — a seed script holding credentials for three
+databases would be the first crack in database-per-service (ADR-004), and it would quietly bypass
+the authorization rules it exists to demonstrate. It is safe to re-run: users fall back to login,
+events are found by title, grants are `ON CONFLICT DO NOTHING`, and seat provisioning is idempotent.
 
 ---
 

@@ -106,6 +106,18 @@ function refreshAccessToken(): Promise<string | null> {
   return attempt
 }
 
+/**
+ * Refresh now, on purpose.
+ *
+ * Grants are read at token issue time (PRD §9.1). After creating an event the
+ * caller has just been granted `organizer:event:<id>`, but the token in memory
+ * predates it — so provisioning seats would 403 for up to ten minutes. Rotating
+ * immediately picks the grant up. Same single-flight path as everything else.
+ */
+export function forceRefresh(): Promise<string | null> {
+  return refreshAccessToken()
+}
+
 /* ──────────────────────────────── the client ─────────────────────────────── */
 
 function buildHeaders(options: RequestOptions, token: string | null): Headers {
