@@ -8,8 +8,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --filter @ticketing/web typecheck",
+    "lint": "eslint . && pnpm --filter @ticketing/web lint",
     "build": "pnpm -r --workspace-concurrency=1 build",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
@@ -17,7 +17,8 @@
     "test:oversell": "vitest run --project integration -t oversell",
     "test:regression": "vitest run",
     "seed": "node scripts/seed.ts",
-    "keys:generate": "node scripts/generate-keys.ts"
+    "keys:generate": "node scripts/generate-keys.ts",
+    "dev:web": "pnpm --filter @ticketing/web dev"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

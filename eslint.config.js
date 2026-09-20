@@ -11,6 +11,8 @@ export default tseslint.config(
       // k6 scripts run in k6's own runtime (not Node) and import from
       // jslib.k6.io over https, so they are outside the TS project by nature.
       'loadtest/**',
+      // apps/web is linted by its own eslint-config-next, from its own directory.
+      'apps/web/**',
     ],
   },
   js.configs.recommended,

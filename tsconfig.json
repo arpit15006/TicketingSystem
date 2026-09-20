@@ -15,5 +15,10 @@
     "types": ["node"]
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "apps/*/src/**/*.ts", "apps/*/test/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "*.ts"],
-  "exclude": ["**/dist/**", "**/node_modules/**"]
+  "exclude": ["**/dist/**", "**/node_modules/**",
+    /* apps/web is a Next.js project: JSX, DOM libs and bundler resolution, none
+       of which this NodeNext project can compile. It carries its own tsconfig and
+       is typechecked by its own `pnpm --filter @ticketing/web typecheck`, which the
+       root `pnpm typecheck` chains so one command still covers the whole repo. */
+    "apps/web/**"]
 }
