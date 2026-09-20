@@ -1,7 +1,16 @@
 # PRD §17 — one file, healthchecks on every container, `docker compose up` reaches
 # healthy with zero manual steps.
 #
-# Run from the repository root:  docker compose -f infra/docker-compose.yml up -d
+# Run from the repository root — `pnpm stack:up`, or:
+#
+#   docker compose -f infra/docker-compose.yml --env-file .env up -d --wait
+#
+# `--env-file .env` is NOT optional. Compose resolves ${VAR} against its project
+# directory, which is the directory holding THIS file, so without the flag it
+# looks for infra/.env, finds nothing, and substitutes every `${VAR:-}` below with
+# an EMPTY STRING. The stack still starts and still reports healthy — and then
+# orders fails its first real payment with "Authentication failed" from Razorpay,
+# and identity quietly runs on an ephemeral keypair. Use the script.
 
 name: ticketing
 

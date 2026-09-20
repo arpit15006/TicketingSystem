@@ -46,6 +46,16 @@ export default function SeatsPage() {
   })
 
   const [selected, setSelected] = React.useState<Set<string>>(new Set())
+  /*
+   * seatId → tierId, kept alongside the selection.
+   *
+   * `/availability` returns only *free* seats, so the moment a hold succeeds the
+   * held seats vanish from it — and a total priced by looking seats up there
+   * collapses to ₹0 exactly when the buyer is about to pay. The tier travels with
+   * the selection instead: from the seatmap cell when picking, and from
+   * `GET /reservations/:holdId` when restoring after a reload.
+   */
+  const [seatTiers, setSeatTiers] = React.useState<Map<string, string>>(new Map())
   const [lostSeatIds, setLostSeatIds] = React.useState<Set<string>>(new Set())
   const [holdId, setHoldId] = React.useState<string | null>(null)
   const [expiresAt, setExpiresAt] = React.useState<string | null>(null)
@@ -70,6 +80,7 @@ export default function SeatsPage() {
         setHoldId(hold.holdId)
         setExpiresAt(hold.expiresAt)
         setSelected(new Set(hold.seats.map((seat) => seat.seatId)))
+        setSeatTiers(new Map(hold.seats.map((seat) => [seat.seatId, seat.tierId])))
       })
       .catch(() => {
         // Gone, expired or not ours any more. Start clean.
@@ -105,6 +116,7 @@ export default function SeatsPage() {
     setHoldId(null)
     setExpiresAt(null)
     setSelected(new Set())
+    setSeatTiers(new Map())
     toast.warning("Your hold expired", {
       description: "The seats went back on sale. Pick them again if they are still free.",
     })
@@ -113,14 +125,24 @@ export default function SeatsPage() {
 
   const toggleSeat = (cell: SeatCell): void => {
     if (cell.seatId === null || hasHold) return
+    const seatId = cell.seatId
     setLostSeatIds(new Set())
     setSelected((current) => {
       const next = new Set(current)
-      if (next.has(cell.seatId!)) next.delete(cell.seatId!)
-      else if (next.size >= MAX_SEATS) {
+      if (next.has(seatId)) {
+        next.delete(seatId)
+        setSeatTiers((tiers) => {
+          const updated = new Map(tiers)
+          updated.delete(seatId)
+          return updated
+        })
+      } else if (next.size >= MAX_SEATS) {
         toast.error(`You can hold at most ${MAX_SEATS} seats at a time`)
         return current
-      } else next.add(cell.seatId!)
+      } else {
+        next.add(seatId)
+        setSeatTiers((tiers) => new Map(tiers).set(seatId, cell.tierId))
+      }
       return next
     })
   }
@@ -179,6 +201,7 @@ export default function SeatsPage() {
       setHoldId(null)
       setExpiresAt(null)
       setSelected(new Set())
+      setSeatTiers(new Map())
       void queryClient.invalidateQueries({ queryKey: ["availability", eventId] })
       toast.success("Seats released")
     } catch (error) {
@@ -195,12 +218,27 @@ export default function SeatsPage() {
       const order = await api<PlacedOrder>("/orders", {
         method: "POST",
         body: { holdId },
-        idempotencyKey: crypto.randomUUID(),
+        /*
+         * Derived from the hold, NOT random.
+         *
+         * A fresh key on every press asks for a brand new order each time, and
+         * the second one collides with `orders_one_live_per_hold` — the buyer
+         * dead-ends on a 409 while their seats sit held until expiry. Keyed on
+         * the hold, a second press replays the first order instead, which is
+         * what Idempotency-Key is for (PRD §10.1).
+         */
+        idempotencyKey: `order-${holdId}`,
       })
       forgetHold(eventId)
       router.push(`/checkout/${order.orderId}`)
     } catch (error) {
-      if (error instanceof ApiError) {
+      if (error instanceof ApiError && error.code === "CONFLICT") {
+        // An order exists for this hold from before the idempotency key was
+        // keyed on the hold. Say what to do rather than showing a bare error.
+        toast.error("This hold already has an order", {
+          description: "Release these seats and pick them again to start over.",
+        })
+      } else if (error instanceof ApiError) {
         toast.error(error.message, { description: error.requestId })
       } else {
         toast.error("Could not start checkout")
@@ -217,11 +255,12 @@ export default function SeatsPage() {
 
   const selectedTotal = React.useMemo(() => {
     let total = 0
-    for (const seat of availability?.seats ?? []) {
-      if (selected.has(seat.seat_id)) total += tiersById.get(seat.tier_id) ?? 0
+    for (const seatId of selected) {
+      const tierId = seatTiers.get(seatId)
+      if (tierId !== undefined) total += tiersById.get(tierId) ?? 0
     }
     return total
-  }, [availability, selected, tiersById])
+  }, [selected, seatTiers, tiersById])
 
   const holdWindow = event?.hold_duration_seconds ?? 480
   const tooLateToPay = hasHold && secondsLeft < MIN_SECONDS_TO_START_PAYMENT

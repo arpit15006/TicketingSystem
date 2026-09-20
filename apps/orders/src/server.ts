@@ -409,6 +409,22 @@ export async function buildServer(options: BuildServerOptions): Promise<OrdersSe
       amountPaise: Number(order.amount_paise),
       status: order.status,
       failureReason: order.failure_reason,
+      /*
+       * The Razorpay handles a client needs to *resume* a checkout.
+       *
+       * Without them here, a browser that reloaded the checkout page had no way
+       * to reopen Checkout for an order it had already created, and its only
+       * recourse was to POST /orders again — which collides with
+       * `orders_one_live_per_hold` and dead-ends the buyer on a 409 while their
+       * seats sit held.
+       *
+       * Both are safe to return. `razorpay_order_id` is an opaque handle that is
+       * useless without a signature, and the key id is the *publishable* key —
+       * Razorpay Checkout takes it in the browser by design. The key secret and
+       * the webhook secret never leave this service.
+       */
+      razorpayOrderId: order.razorpay_order_id,
+      razorpayKeyId: config.razorpayKeyId,
       tickets: tickets.rows,
     };
   });

@@ -14,7 +14,7 @@ import { api, ApiError } from "@/lib/api"
 import { useSession } from "@/lib/auth"
 import { formatPaise } from "@/lib/format"
 import { loadRazorpay, openRazorpay, type RazorpayHandlerResponse } from "@/lib/razorpay"
-import type { OrderDetail, PlacedOrder } from "@/lib/api-types"
+import type { OrderDetail } from "@/lib/api-types"
 
 /**
  * PRD §10.1 — the Razorpay handoff.
@@ -39,11 +39,6 @@ export default function CheckoutPage() {
     queryFn: async () => api<OrderDetail>(`/orders/${orderId}`),
   })
 
-  // The publishable key and razorpay order id live on the order-creation
-  // response, so they are re-read here from sessionStorage if present, and
-  // otherwise re-requested by starting checkout.
-  const [handoff, setHandoff] = React.useState<Pick<PlacedOrder, "razorpayKeyId" | "razorpayOrderId"> | null>(null)
-
   React.useEffect(() => {
     if (order === undefined) return
     if (order.status === "confirmed" || order.status === "refunded_seat_lost") {
@@ -57,23 +52,26 @@ export default function CheckoutPage() {
     try {
       await loadRazorpay()
 
-      // Re-place the order to obtain the checkout handles. The same hold gives
-      // the same order back — `orders_one_live_per_hold` plus idempotency make
-      // this safe rather than a second payment intent.
-      const fresh =
-        handoff ??
-        (await api<PlacedOrder>("/orders", {
-          method: "POST",
-          body: { holdId: order.holdId },
-          idempotencyKey: `checkout-${orderId}`,
-        }))
-      setHandoff(fresh)
+      /*
+       * No second POST /orders.
+       *
+       * The earlier version re-placed the order to recover the Razorpay handles,
+       * which collides with `orders_one_live_per_hold` and dead-ends the buyer on
+       * a 409 while their seats stay held. `GET /orders/:id` now carries both
+       * handles, so a reloaded checkout resumes the order it already has instead
+       * of asking for another one.
+       */
+      if (order.razorpayOrderId === null) {
+        toast.error("This order has no payment attached yet")
+        setPaying(false)
+        return
+      }
 
       openRazorpay({
-        key: fresh.razorpayKeyId,
+        key: order.razorpayKeyId,
         amount: order.amountPaise,
         currency: "INR",
-        order_id: fresh.razorpayOrderId,
+        order_id: order.razorpayOrderId,
         name: "Ticketing",
         description: `${order.seatIds.length} seat${order.seatIds.length === 1 ? "" : "s"}`,
         ...(user === null ? {} : { prefill: { name: user.fullName, email: user.email } }),

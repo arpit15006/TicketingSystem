@@ -180,6 +180,9 @@ export interface OrderDetail {
   amountPaise: number
   status: OrderStatus
   failureReason: string | null
+  /** Present so a reloaded checkout can reopen Razorpay without a second POST. */
+  razorpayOrderId: string | null
+  razorpayKeyId: string
   tickets: Ticket[]
 }
 
