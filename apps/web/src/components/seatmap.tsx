@@ -60,14 +60,80 @@ export interface SeatCell {
 export const seatKey = (section: string, rowLabel: string, seatNumber: string): string =>
   `${section}|${rowLabel}|${seatNumber}`
 
+/** What the floating tooltip shows for the seat under the pointer. */
+export interface HoverInfo {
+  seatId: string | null
+  section: string
+  rowLabel: string
+  seatNumber: string
+  tierName: string
+  pricePaise: number
+  taken: boolean
+  clientX: number
+  clientY: number
+}
+
 export interface SeatmapProps {
   event: EventDetail
   availableSeats: AvailableSeat[]
   selected: Set<string>
   /** Seats a 409 just told us went to someone else — greyed and briefly flagged. */
   lostSeatIds?: Set<string>
+  /** When set, sections of other tiers are dimmed and not clickable. */
+  onlyTierId?: string | null
   disabled?: boolean
   onToggle: (cell: SeatCell) => void
+  onHover?: (info: HoverInfo | null) => void
+}
+
+/**
+ * "Best available": `count` free seats together in one row, as close to the
+ * stage as possible (lowest row index), optionally within one tier. Returns
+ * seat ids, or an empty list when no row has a long enough run.
+ *
+ * Pure: it reads the same geometry + availability the map renders, so what it
+ * picks is exactly what the map would show as free.
+ */
+export function findBestSeats(
+  event: EventDetail,
+  availableSeats: AvailableSeat[],
+  count: number,
+  onlyTierId: string | null = null
+): string[] {
+  const free = new Map<string, string>()
+  for (const seat of availableSeats) free.set(seatKey(seat.section, seat.row_label, seat.seat_number), seat.seat_id)
+
+  const widest = Math.max(1, ...event.sections.map((s) => s.seats_per_row))
+  // Sections are laid out top to bottom in catalog order, first nearest the
+  // stage — so "closest to the stage" is section order first, then row.
+  let best: { sectionIndex: number; rowIndex: number; centre: number; ids: string[] } | null = null
+
+  for (const [sectionIndex, section] of event.sections.entries()) {
+    if (onlyTierId !== null && section.tier_id !== onlyTierId) continue
+    for (let r = 0; r < section.row_count; r += 1) {
+      const rowLabel = `R${r + 1}`
+      let run: string[] = []
+      for (let c = 0; c < section.seats_per_row; c += 1) {
+        const id = free.get(seatKey(section.name, rowLabel, String(c + 1)))
+        if (id === undefined) {
+          run = []
+          continue
+        }
+        run.push(id)
+        if (run.length === count) {
+          // Prefer the front, then the middle of the row.
+          const centre = Math.abs((c - count / 2) - section.seats_per_row / 2) / widest
+          const better =
+            best === null ||
+            sectionIndex < best.sectionIndex ||
+            (sectionIndex === best.sectionIndex && (r < best.rowIndex || (r === best.rowIndex && centre < best.centre)))
+          if (better) best = { sectionIndex, rowIndex: r, centre, ids: [...run] }
+          run.shift()
+        }
+      }
+    }
+  }
+  return best?.ids ?? []
 }
 
 export function Seatmap({
@@ -75,8 +141,10 @@ export function Seatmap({
   availableSeats,
   selected,
   lostSeatIds,
+  onlyTierId = null,
   disabled = false,
   onToggle,
+  onHover,
 }: SeatmapProps) {
   // Only free seats come back from /availability, so presence in this map IS
   // availability. Absence means sold, held by someone else, or never existed.
@@ -105,9 +173,11 @@ export function Seatmap({
     () =>
       sections.map((section, index) => ({
         section,
-        top: sections
-          .slice(0, index)
-          .reduce((offset, above) => offset + above.row_count * PITCH + SECTION_GAP, 0),
+        top:
+          34 +
+          sections
+            .slice(0, index)
+            .reduce((offset, above) => offset + above.row_count * PITCH + SECTION_GAP, 0),
       })),
     [sections]
   )
@@ -122,8 +192,9 @@ export function Seatmap({
 
   const widest = Math.max(...sections.map((s) => s.seats_per_row))
   const width = ROW_LABEL_WIDTH + widest * PITCH + 8
+  const STAGE = 34
   const height =
-    sections.reduce((total, s) => total + s.row_count * PITCH + SECTION_GAP, 0) + 8
+    STAGE + sections.reduce((total, s) => total + s.row_count * PITCH + SECTION_GAP, 0) + 8
 
   return (
     <svg
@@ -131,12 +202,26 @@ export function Seatmap({
       className="h-auto w-full"
       role="group"
       aria-label={`Seatmap for ${event.title}`}
+      onMouseLeave={() => onHover?.(null)}
     >
+      {/* Every venue has a front; the map says where it is. */}
+      <rect x={ROW_LABEL_WIDTH} y={0} width={widest * PITCH - GAP} height={18} rx={9} className="fill-foreground/10" />
+      <text
+        x={ROW_LABEL_WIDTH + (widest * PITCH - GAP) / 2}
+        y={13}
+        textAnchor="middle"
+        className="fill-muted-foreground text-[9px] font-semibold tracking-[0.3em]"
+      >
+        STAGE
+      </text>
+
       {layout.map(({ section, top: sectionTop }) => {
         const tier = tiersById.get(section.tier_id)
 
+        const dimmed = onlyTierId !== null && section.tier_id !== onlyTierId
+
         return (
-          <g key={section.section_id}>
+          <g key={section.section_id} className={dimmed ? "opacity-25" : undefined}>
             <text
               x={0}
               y={sectionTop + 12}
@@ -167,6 +252,7 @@ export function Seatmap({
                     const isSelected = seatId !== null && selected.has(seatId)
                     const isLost = seatId !== null && lostSeatIds?.has(seatId) === true
                     const isTaken = seatId === null
+                    const inert = isTaken || disabled || dimmed
 
                     const cell: SeatCell = {
                       key,
@@ -185,10 +271,10 @@ export function Seatmap({
                         width={SEAT}
                         height={SEAT}
                         rx={3}
-                        tabIndex={isTaken || disabled ? -1 : 0}
+                        tabIndex={inert ? -1 : 0}
                         role="checkbox"
                         aria-checked={isSelected}
-                        aria-disabled={isTaken || disabled}
+                        aria-disabled={inert}
                         aria-label={`${section.name} row ${rowIndex + 1} seat ${seatNumber}${
                           isTaken ? ", unavailable" : tier === undefined ? "" : `, ${formatPaise(tier.price_paise)}`
                         }`}
@@ -204,11 +290,24 @@ export function Seatmap({
                         )}
                         strokeWidth={1}
                         onClick={() => {
-                          if (isTaken || disabled) return
+                          if (inert) return
                           onToggle(cell)
                         }}
+                        onMouseEnter={(e) =>
+                          onHover?.({
+                            seatId,
+                            section: section.name,
+                            rowLabel,
+                            seatNumber,
+                            tierName: tier?.name ?? "",
+                            pricePaise: tier?.price_paise ?? 0,
+                            taken: isTaken,
+                            clientX: e.clientX,
+                            clientY: e.clientY,
+                          })
+                        }
                         onKeyDown={(e) => {
-                          if (isTaken || disabled) return
+                          if (inert) return
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault()
                             onToggle(cell)

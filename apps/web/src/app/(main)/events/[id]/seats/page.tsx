@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { ArrowLeftIcon, ClockIcon, LoaderCircleIcon } from "lucide-react"
+import { ArrowLeftIcon, ClockIcon, LoaderCircleIcon, SparklesIcon, ShoppingBagIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -13,8 +13,12 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Seatmap, SeatmapLegend, type SeatCell } from "@/components/seatmap"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
+import { BookingSteps } from "@/components/booking-steps"
+import { SeatmapViewport } from "@/components/seatmap-viewport"
+import { Seatmap, SeatmapLegend, findBestSeats, type HoverInfo, type SeatCell } from "@/components/seatmap"
 import { api, ApiError } from "@/lib/api"
 import { useSession } from "@/lib/auth"
 import { useAvailability, useEvent } from "@/lib/queries"
@@ -80,6 +84,10 @@ export default function SeatsPage() {
   const [holdId, setHoldId] = React.useState<string | null>(null)
   const [expiresAt, setExpiresAt] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
+  const [onlyTierId, setOnlyTierId] = React.useState<string | null>(null)
+  const [hover, setHover] = React.useState<HoverInfo | null>(null)
+  const [bestCount, setBestCount] = React.useState(2)
+  const mapRef = React.useRef<HTMLDivElement>(null)
 
   const secondsLeft = useCountdown(expiresAt)
   const hasHold = holdId !== null && secondsLeft > 0
@@ -165,6 +173,21 @@ export default function SeatsPage() {
       }
       return next
     })
+  }
+
+  /** "Best available": N seats together, closest to the stage, in the chosen tier. */
+  const pickBest = (): void => {
+    if (event === undefined || hasHold) return
+    const ids = findBestSeats(event, availability?.seats ?? [], bestCount, onlyTierId)
+    if (ids.length === 0) {
+      toast.error(`No ${bestCount} seats together${onlyTierId === null ? "" : " in that tier"}`)
+      return
+    }
+    const tierOf = new Map((availability?.seats ?? []).map((seat) => [seat.seat_id, seat.tier_id]))
+    setLostSeatIds(new Set())
+    setSelected(new Set(ids))
+    setSeatTiers(new Map(ids.map((id) => [id, tierOf.get(id) ?? ""])))
+    toast.success(`Picked ${ids.length} seats together`)
   }
 
   const onHold = async (): Promise<void> => {
@@ -298,139 +321,246 @@ export default function SeatsPage() {
   const holdWindow = event?.hold_duration_seconds ?? 480
   const tooLateToPay = hasHold && secondsLeft < MIN_SECONDS_TO_START_PAYMENT
 
+  const basket = (
+    <div className="flex flex-col gap-4">
+      {hasHold && (
+        <Card className={tooLateToPay ? "border-destructive" : "border-primary"}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ClockIcon className="size-4" />
+              Held for {formatCountdown(secondsLeft)}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <Progress value={(secondsLeft / holdWindow) * 100} />
+            <p className="text-xs text-muted-foreground">
+              Yours until the timer runs out. Then they go back on sale automatically — nothing needs to run
+              for that to happen.
+            </p>
+            {tooLateToPay && (
+              <Alert variant="destructive">
+                <AlertTitle>Not enough time left to pay</AlertTitle>
+                <AlertDescription>
+                  Checkout needs at least {MIN_SECONDS_TO_START_PAYMENT} seconds on the hold. Release these and
+                  pick them again.
+                </AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            {selected.size === 0 ? "No seats selected" : `${selected.size} seat${selected.size === 1 ? "" : "s"}`}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {selected.size > 0 && (
+            <>
+              <ul className="flex flex-col gap-1 text-sm">
+                {(availability?.seats ?? [])
+                  .filter((seat) => selected.has(seat.seat_id))
+                  .map((seat) => (
+                    <li key={seat.seat_id} className="flex justify-between">
+                      <span>
+                        {seat.section} · Row {seat.row_label.slice(1)} · Seat {seat.seat_number}
+                      </span>
+                      <span className="tabular-nums text-muted-foreground">
+                        {formatPaise(tiersById.get(seat.tier_id) ?? 0)}
+                      </span>
+                    </li>
+                  ))}
+                {hasHold && (availability?.seats ?? []).filter((seat) => selected.has(seat.seat_id)).length === 0 && (
+                  <li className="text-muted-foreground">{selected.size} held seats</li>
+                )}
+              </ul>
+              <Separator />
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Total</span>
+                <span className="text-lg font-semibold tabular-nums">{formatPaise(selectedTotal)}</span>
+              </div>
+            </>
+          )}
+
+          {lostSeatIds.size > 0 && (
+            <Alert variant="destructive">
+              <AlertTitle>{lostSeatIds.size} seats were taken</AlertTitle>
+              <AlertDescription>Another buyer got there first. They are marked in red.</AlertDescription>
+            </Alert>
+          )}
+
+          {!sessionLoading && !isAuthenticated && (
+            <Alert>
+              <AlertTitle>Sign in to hold seats</AlertTitle>
+              <AlertDescription>You can browse freely, but holding a seat needs an account.</AlertDescription>
+            </Alert>
+          )}
+
+          {hasHold ? (
+            <div className="flex flex-col gap-2">
+              <Button size="lg" disabled={busy || tooLateToPay} onClick={() => void onCheckout()}>
+                {busy && <LoaderCircleIcon className="size-4 animate-spin" />}
+                Pay {formatPaise(selectedTotal)}
+              </Button>
+              <Button variant="outline" disabled={busy} onClick={() => void onRelease()}>
+                Release seats
+              </Button>
+            </div>
+          ) : (
+            <Button size="lg" disabled={selected.size === 0 || busy} onClick={() => void onHold()}>
+              {busy && <LoaderCircleIcon className="size-4 animate-spin" />}
+              Hold {selected.size > 0 ? `${selected.size} ` : ""}seat{selected.size === 1 ? "" : "s"}
+            </Button>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            <Badge variant="secondary" className="mr-1">
+              {availability?.available?.toLocaleString("en-IN") ?? "—"}
+            </Badge>
+            seats free right now
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  )
+
   return (
-    <div className="flex flex-col gap-6">
-      <Button variant="ghost" size="sm" className="self-start px-0" asChild>
-        <Link href={`/events/${eventId}`}>
-          <ArrowLeftIcon className="size-4" />
-          {event?.title ?? "Back to event"}
-        </Link>
-      </Button>
+    <div className="flex flex-col gap-6 pb-24 lg:pb-0">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Button variant="ghost" size="sm" className="px-0" asChild>
+          <Link href={`/events/${eventId}`}>
+            <ArrowLeftIcon className="size-4" />
+            {event?.title ?? "Back to event"}
+          </Link>
+        </Button>
+        <BookingSteps current={1} />
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <Card>
           <CardHeader className="gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <CardTitle>Choose your seats</CardTitle>
-              <Badge variant="outline">Screen / stage this way ↑</Badge>
+              {event !== undefined && event.tiers.length > 1 && (
+                <ToggleGroup
+                  type="single"
+                  size="sm"
+                  variant="outline"
+                  value={onlyTierId ?? "all"}
+                  onValueChange={(v) => v !== "" && setOnlyTierId(v === "all" ? null : v)}
+                >
+                  <ToggleGroupItem value="all">All tiers</ToggleGroupItem>
+                  {event.tiers.map((tier) => (
+                    <ToggleGroupItem key={tier.tier_id} value={tier.tier_id}>
+                      {tier.name}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              )}
             </div>
             <SeatmapLegend tiers={event?.tiers ?? []} />
+
+            {/* "Best available" — N together, nearest the stage */}
+            {!hasHold && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-2 text-sm">
+                <SparklesIcon className="size-4 text-muted-foreground" />
+                <span className="text-muted-foreground">Best available:</span>
+                <NativeSelect value={String(bestCount)} onChange={(e) => setBestCount(Number(e.target.value))} className="w-24">
+                  {Array.from({ length: MAX_SEATS }, (_, i) => (
+                    <NativeSelectOption key={i + 1} value={String(i + 1)}>
+                      {i + 1} seat{i === 0 ? "" : "s"}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                <Button type="button" size="sm" variant="secondary" onClick={pickBest} disabled={seatsLoading || busy}>
+                  Pick for me
+                </Button>
+              </div>
+            )}
           </CardHeader>
           <CardContent>
             {seatsLoading || event === undefined ? (
-              <Skeleton className="h-[420px] w-full" />
+              <Skeleton className="h-[560px] w-full" />
             ) : (
-              <ScrollArea className="h-[560px] rounded-md border p-3">
-                <Seatmap
-                  event={event}
-                  availableSeats={availability?.seats ?? []}
-                  selected={selected}
-                  lostSeatIds={lostSeatIds}
-                  disabled={hasHold || busy}
-                  onToggle={toggleSeat}
-                />
-              </ScrollArea>
+              <div ref={mapRef} className="relative">
+                <SeatmapViewport>
+                  <Seatmap
+                    event={event}
+                    availableSeats={availability?.seats ?? []}
+                    selected={selected}
+                    lostSeatIds={lostSeatIds}
+                    onlyTierId={onlyTierId}
+                    disabled={hasHold || busy}
+                    onToggle={toggleSeat}
+                    onHover={(info) => {
+                      if (info === null) {
+                        setHover(null)
+                        return
+                      }
+                      const rect = mapRef.current?.getBoundingClientRect()
+                      setHover({ ...info, clientX: info.clientX - (rect?.left ?? 0), clientY: info.clientY - (rect?.top ?? 0) })
+                    }}
+                  />
+                </SeatmapViewport>
+
+                {/* One floating tooltip for 5,000 seats — not 5,000 tooltips. */}
+                {hover !== null && (
+                  <div
+                    className="pointer-events-none absolute z-10 rounded-md bg-foreground px-2.5 py-1.5 text-xs text-background shadow-md"
+                    style={{ left: hover.clientX + 12, top: hover.clientY - 40 }}
+                  >
+                    <div className="font-medium">
+                      {hover.section} · Row {hover.rowLabel.slice(1)} · Seat {hover.seatNumber}
+                    </div>
+                    <div className="opacity-80">
+                      {hover.taken ? "Taken" : `${hover.tierName} · ${formatPaise(hover.pricePaise)}`}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>
 
-        <div className="flex flex-col gap-4 lg:sticky lg:top-20 lg:h-fit">
-          {hasHold && (
-            <Card className={tooLateToPay ? "border-destructive" : "border-primary"}>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <ClockIcon className="size-4" />
-                  Held for {formatCountdown(secondsLeft)}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                <Progress value={(secondsLeft / holdWindow) * 100} />
-                <p className="text-xs text-muted-foreground">
-                  These seats are yours until the timer runs out. After that they go back on
-                  sale automatically — nothing needs to run for that to happen.
-                </p>
-                {tooLateToPay && (
-                  <Alert variant="destructive">
-                    <AlertTitle>Not enough time left to pay</AlertTitle>
-                    <AlertDescription>
-                      Checkout needs at least {MIN_SECONDS_TO_START_PAYMENT} seconds on the
-                      hold. Release these and pick them again.
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </CardContent>
-            </Card>
+        {/* Desktop: the basket beside the map. */}
+        <div className="hidden lg:sticky lg:top-20 lg:block lg:h-fit">{basket}</div>
+      </div>
+
+      {/* Mobile: a fixed bar with the essentials, and a drawer for the rest. */}
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 p-3 backdrop-blur lg:hidden">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+          <div className="flex flex-col">
+            <span className="text-sm font-medium">
+              {hasHold ? `Held · ${formatCountdown(secondsLeft)}` : `${selected.size} seat${selected.size === 1 ? "" : "s"}`}
+            </span>
+            <span className="text-xs text-muted-foreground tabular-nums">{formatPaise(selectedTotal)}</span>
+          </div>
+          <Drawer>
+            <DrawerTrigger asChild>
+              <Button variant="outline" size="sm">
+                <ShoppingBagIcon className="size-4" />
+                Details
+              </Button>
+            </DrawerTrigger>
+            <DrawerContent>
+              <DrawerHeader>
+                <DrawerTitle>Your seats</DrawerTitle>
+                <DrawerDescription>{event?.title}</DrawerDescription>
+              </DrawerHeader>
+              <div className="overflow-y-auto px-4 pb-6">{basket}</div>
+            </DrawerContent>
+          </Drawer>
+          {hasHold ? (
+            <Button size="sm" disabled={busy || tooLateToPay} onClick={() => void onCheckout()}>
+              Pay
+            </Button>
+          ) : (
+            <Button size="sm" disabled={selected.size === 0 || busy} onClick={() => void onHold()}>
+              Hold
+            </Button>
           )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">
-                {selected.size === 0
-                  ? "No seats selected"
-                  : `${selected.size} seat${selected.size === 1 ? "" : "s"}`}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              {selected.size > 0 && (
-                <>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Total</span>
-                    <span className="text-lg font-semibold tabular-nums">
-                      {formatPaise(selectedTotal)}
-                    </span>
-                  </div>
-                  <Separator />
-                </>
-              )}
-
-              {lostSeatIds.size > 0 && (
-                <Alert variant="destructive">
-                  <AlertTitle>{lostSeatIds.size} seats were taken</AlertTitle>
-                  <AlertDescription>
-                    Another buyer got there first. They are marked in red.
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {!sessionLoading && !isAuthenticated && (
-                <Alert>
-                  <AlertTitle>Sign in to hold seats</AlertTitle>
-                  <AlertDescription>
-                    You can browse freely, but holding a seat needs an account.
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {hasHold ? (
-                <div className="flex flex-col gap-2">
-                  <Button size="lg" disabled={busy || tooLateToPay} onClick={() => void onCheckout()}>
-                    {busy && <LoaderCircleIcon className="size-4 animate-spin" />}
-                    Pay {formatPaise(selectedTotal)}
-                  </Button>
-                  <Button variant="outline" disabled={busy} onClick={() => void onRelease()}>
-                    Release seats
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  size="lg"
-                  disabled={selected.size === 0 || busy}
-                  onClick={() => void onHold()}
-                >
-                  {busy && <LoaderCircleIcon className="size-4 animate-spin" />}
-                  Hold {selected.size > 0 ? `${selected.size} ` : ""}seat
-                  {selected.size === 1 ? "" : "s"}
-                </Button>
-              )}
-
-              <p className="text-xs text-muted-foreground">
-                <Badge variant="secondary" className="mr-1">
-                  {availability?.available?.toLocaleString("en-IN") ?? "—"}
-                </Badge>
-                seats free right now
-              </p>
-            </CardContent>
-          </Card>
         </div>
       </div>
     </div>

@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query"
 import QRCode from "react-qr-code"
 import { CalendarIcon, CheckCircle2Icon, CircleAlertIcon, ClockIcon, MapPinIcon } from "lucide-react"
 import { EventPoster } from "@/components/event-card"
+import { BookingSteps } from "@/components/booking-steps"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -62,6 +63,7 @@ export default function OrderPage() {
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
+      {confirmed && <BookingSteps current={3} />}
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold tracking-tight">
           {confirmed ? "You're going!" : compensated ? "Seat lost" : "Your order"}
