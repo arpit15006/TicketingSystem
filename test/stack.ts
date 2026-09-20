@@ -6,23 +6,33 @@ import type { Pool } from 'pg';
 import { createPool } from '@ticketing/http';
 import { createTestDatabase, type TestDatabase } from '@ticketing/testkit';
 
-import { loadConfig as loadIdentityConfig } from '../../identity/src/config.js';
-import { loadSigningKeys } from '../../identity/src/keys.js';
-import { createInMemoryDenylist } from '../../identity/src/denylist.js';
-import { buildServer as buildIdentity } from '../../identity/src/server.js';
+import { loadConfig as loadIdentityConfig } from '../apps/identity/src/config.js';
+import { loadSigningKeys } from '../apps/identity/src/keys.js';
+import { createInMemoryDenylist } from '../apps/identity/src/denylist.js';
+import { buildServer as buildIdentity } from '../apps/identity/src/server.js';
 
-import { loadConfig as loadCatalogConfig } from '../../catalog/src/config.js';
-import { buildServer as buildCatalog } from '../../catalog/src/server.js';
+import { loadConfig as loadCatalogConfig } from '../apps/catalog/src/config.js';
+import { buildServer as buildCatalog } from '../apps/catalog/src/server.js';
 
-import { loadConfig as loadReservationConfig } from '../../reservation/src/config.js';
-import { buildServer as buildReservation } from '../../reservation/src/server.js';
+import { loadConfig as loadReservationConfig } from '../apps/reservation/src/config.js';
+import { buildServer as buildReservation } from '../apps/reservation/src/server.js';
 
-import { loadConfig as loadGatewayConfig } from '../src/config.js';
-import { buildServer as buildGateway } from '../src/server.js';
+import { loadConfig as loadOrdersConfig } from '../apps/orders/src/config.js';
+import { buildServer as buildOrders } from '../apps/orders/src/server.js';
+import { createRazorpayClient } from '../apps/orders/src/razorpay.js';
+import { createReservationClient, createCatalogClient } from '../apps/orders/src/clients.js';
+import { startFakeRazorpay, type FakeRazorpay } from '@ticketing/testkit';
 
-const IDENTITY_MIGRATIONS = fileURLToPath(new URL('../../identity/migrations', import.meta.url));
-const CATALOG_MIGRATIONS = fileURLToPath(new URL('../../catalog/migrations', import.meta.url));
-const RESERVATION_MIGRATIONS = fileURLToPath(new URL('../../reservation/migrations', import.meta.url));
+import { loadConfig as loadGatewayConfig } from '../apps/gateway/src/config.js';
+import { buildServer as buildGateway } from '../apps/gateway/src/server.js';
+
+const IDENTITY_MIGRATIONS = fileURLToPath(new URL('../apps/identity/migrations', import.meta.url));
+const CATALOG_MIGRATIONS = fileURLToPath(new URL('../apps/catalog/migrations', import.meta.url));
+const RESERVATION_MIGRATIONS = fileURLToPath(new URL('../apps/reservation/migrations', import.meta.url));
+const ORDERS_MIGRATIONS = fileURLToPath(new URL('../apps/orders/migrations', import.meta.url));
+
+/** Shared secret for internal service-to-service calls within the test stack. */
+export const TEST_SERVICE_TOKEN = 'test-internal-service-token';
 
 export interface Stack {
   gatewayUrl: string;
@@ -30,9 +40,12 @@ export interface Stack {
   /** Shared JWT settings, so a test can build another gateway against this stack. */
   jwt: { jwksUri: string; jwtIssuer: string; jwtAudience: string };
   bootstrapAdminEmail: string;
-  pools: { identity: Pool; catalog: Pool; reservation: Pool };
+  pools: { identity: Pool; catalog: Pool; reservation: Pool; orders: Pool };
+  /** The Razorpay stand-in: authorize payments, sign callbacks, build webhooks. */
+  razorpay: FakeRazorpay;
+  serviceToken: string;
   /** Direct URLs, used to prove a service defends itself when the edge is bypassed. */
-  direct: { identity: string; catalog: string; reservation: string };
+  direct: { identity: string; catalog: string; reservation: string; orders: string };
   request: (
     method: string,
     path: string,
@@ -74,7 +87,10 @@ export async function startStack(): Promise<Stack> {
   const identityDb = await createTestDatabase({ adminUrl, migrationsDir: IDENTITY_MIGRATIONS });
   const catalogDb = await createTestDatabase({ adminUrl, migrationsDir: CATALOG_MIGRATIONS });
   const reservationDb = await createTestDatabase({ adminUrl, migrationsDir: RESERVATION_MIGRATIONS });
-  dbs.push(identityDb, catalogDb, reservationDb);
+  const ordersDb = await createTestDatabase({ adminUrl, migrationsDir: ORDERS_MIGRATIONS });
+  dbs.push(identityDb, catalogDb, reservationDb, ordersDb);
+
+  const razorpay = await startFakeRazorpay();
 
   // ── identity ──────────────────────────────────────────────────────────────
   const bootstrapAdminEmail = `bootstrap.${randomUUID()}@demo.test`;
@@ -120,6 +136,7 @@ export async function startStack(): Promise<Stack> {
       nodeEnv: 'test',
       logLevel: 'silent',
       janitorEnabled: false,
+      internalServiceToken: TEST_SERVICE_TOKEN,
       ...jwt,
     }),
     pool: reservationPool,
@@ -127,6 +144,37 @@ export async function startStack(): Promise<Stack> {
   const reservationUrl = await listen(reservationApp);
   apps.push(reservationApp);
   pools.push(reservationPool);
+
+  // ── orders ────────────────────────────────────────────────────────────────
+  const ordersPool = createPool({ databaseUrl: ordersDb.url, max: 10, statementTimeoutMs: 30_000 });
+  const ordersApp = await buildOrders({
+    config: loadOrdersConfig({
+      databaseUrl: ordersDb.url,
+      nodeEnv: 'test',
+      logLevel: 'silent',
+      internalServiceToken: TEST_SERVICE_TOKEN,
+      reservationUrl,
+      catalogUrl,
+      razorpayBaseUrl: razorpay.baseUrl,
+      razorpayKeyId: razorpay.keyId,
+      razorpayKeySecret: razorpay.keySecret,
+      razorpayWebhookSecret: razorpay.webhookSecret,
+      ...jwt,
+    }),
+    pool: ordersPool,
+    // The REAL client, pointed at the stand-in endpoint: the client's own auth
+    // header, request shapes and error handling are all under test.
+    razorpay: createRazorpayClient({
+      baseUrl: razorpay.baseUrl,
+      keyId: razorpay.keyId,
+      keySecret: razorpay.keySecret,
+    }),
+    reservation: createReservationClient({ baseUrl: reservationUrl, serviceToken: TEST_SERVICE_TOKEN }),
+    catalog: createCatalogClient({ baseUrl: catalogUrl }),
+  });
+  const ordersUrl = await listen(ordersApp);
+  apps.push(ordersApp);
+  pools.push(ordersPool);
 
   // ── gateway ───────────────────────────────────────────────────────────────
   const gatewayApp = await buildGateway({
@@ -136,6 +184,7 @@ export async function startStack(): Promise<Stack> {
       identityUrl,
       catalogUrl,
       reservationUrl,
+      ordersUrl,
       ...jwt,
       // High enough that the functional tests never trip it; a dedicated test
       // builds its own gateway with a low limit instead.
@@ -166,13 +215,16 @@ export async function startStack(): Promise<Stack> {
     identityUrl,
     jwt,
     bootstrapAdminEmail,
-    pools: { identity: identityPool, catalog: catalogPool, reservation: reservationPool },
-    direct: { identity: identityUrl, catalog: catalogUrl, reservation: reservationUrl },
+    pools: { identity: identityPool, catalog: catalogPool, reservation: reservationPool, orders: ordersPool },
+    razorpay,
+    serviceToken: TEST_SERVICE_TOKEN,
+    direct: { identity: identityUrl, catalog: catalogUrl, reservation: reservationUrl, orders: ordersUrl },
     request,
     stop: async () => {
       for (const app of apps.reverse()) await app.close();
       for (const pool of pools) await pool.end();
       for (const db of dbs) await db.drop();
+      await razorpay.stop();
     },
   };
 }

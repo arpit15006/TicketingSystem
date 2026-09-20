@@ -5,7 +5,7 @@ It sells seats for events under one defining constraint: **a seat must never be 
 under a thousand simultaneous buyers, not when a service crashes, not when Redis is down, and not
 when a payment settles after the buyer's hold has already expired.
 
-> **Build status: Phases 1–2 of 8 complete and verified.** This README grows one phase at a time, and
+> **Build status: Phases 1–3 of 8 complete and verified.** This README grows one phase at a time, and
 > every number in it is copied from a real command's output. Sections belonging to unbuilt phases
 > say so rather than describing something that does not exist yet.
 > Progress: [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
@@ -75,22 +75,23 @@ resulting RSTs measure macOS, not seat allocation.)
 | Partial baskets never commit | 1 | ✅ verified |
 | Finalize-after-expiry returns `410` | 1 | ✅ verified |
 | Refresh-token reuse detection | 2 | ✅ verified |
+| Webhook replay ×50 → one ticket, one capture | 3 | ✅ verified |
+| Payment-after-expiry compensation | 3 | ✅ verified |
+| Raw-body webhook signature verification | 3 | ✅ verified |
 | Resource-scoped authorization | 2 | ✅ verified |
 | Authenticated booking end to end through the gateway | 2 | ✅ verified |
 | 5,000-seat seed | 2 | ✅ verified |
-| Webhook replay ×50 → one ticket | 3 | not built yet |
-| Payment-after-expiry compensation | 3 | not built yet |
 | Kafka broker failure and recovery | 4 | not built yet |
 | Redis failure → zero oversells | 5 | not built yet |
 | k6 load test, real p50/p95/p99 | 7 | not built yet |
 | `requestId` traced end to end | 7 | not built yet |
 
-Full suite through Phase 2: **68 tests passing**, run three consecutive times with identical
+Full suite through Phase 3: **97 tests passing**, run four consecutive times with identical
 results, Phase 1's proof unchanged throughout.
 
 ```
- Test Files  12 passed (12)
-      Tests  68 passed (68)
+ Test Files  16 passed (16)
+      Tests  97 passed (97)
 ```
 
 ### 1.3 A stolen refresh token is usable at most once
@@ -108,6 +109,48 @@ other device (separate family) → refresh → 200 ← blast radius stops at the
 
 `refresh-reuse.spec.ts` asserts every line of that, including the last one: revoking a user's
 *other* sessions would be a denial of service dressed up as security.
+
+### 1.4 A payment that settles after the seat is gone
+
+This is the case that separates the project from a ticketing clone. It **cannot** be eliminated —
+that would need a transaction spanning our database and Razorpay's — so it is bounded, detected,
+and compensated automatically.
+
+```
+buyer holds seat → order created → Razorpay authorizes (NOT captured)
+                                          │
+                        hold expires; a rival legitimately takes the seat
+                                          │
+              buyer's callback finally arrives → finalize returns 410 Gone
+                                          ↓
+                                    compensating
+                                          ↓
+                   authorization released (nothing was ever captured)
+                                          ↓
+                                 refunded_seat_lost
+                                          ↓
+                    OrderCompensated → the user is told, with alternatives
+```
+
+`expiry-boundary.spec.ts` asserts the whole thing, and the assertion that matters most is
+**`captureCount === 0`**: no money ever moved. That is the entire argument for manual capture
+(ADR-007) — with auto-capture this would be a refund pending for five days instead.
+
+Three mechanisms bound the window (ADR-008): refuse to start a payment below 90 seconds of
+remaining hold, extend the hold when the payment intent is created, and compensate whatever still
+slips through.
+
+### 1.5 Fifty identical webhooks, one ticket
+
+Payment providers redeliver by design. The same `x-razorpay-event-id` delivered 50 times —
+**sequentially and concurrently** — produces exactly one ticket and exactly one capture, with no
+distributed lock anywhere:
+
+- the event id is claimed by an `INSERT` *before* processing, so the unique constraint picks the
+  winner (checking-then-inserting would let two concurrent deliveries both proceed)
+- seat finalization is idempotent
+- capture reads the payment's state first
+- `tickets.seat_id` is `UNIQUE`, the backstop that holds even if every guard above failed
 
 ---
 
@@ -174,7 +217,7 @@ graph TD
   gw --> id[identity :3001<br/><b>phase 2 ✅</b>]
   gw --> cat[catalog :3002<br/><b>phase 2 ✅</b>]
   gw --> res[reservation :3003<br/><b>phase 1 ✅</b>]
-  gw --> ord[orders :3004<br/><i>phase 3</i>]
+  gw --> ord[orders :3004<br/><b>phase 3 ✅</b>]
   gw --> wr[waitingroom :3005<br/><i>phase 5</i>]
   res --> resdb[(reservation_db<br/>seats · holds · outbox)]
   ord --> orddb[(orders_db)]
@@ -186,8 +229,8 @@ graph TD
   wr -.queue only.-> redis[(Redis<br/><i>phase 5</i>)]
   classDef done fill:#0b6,stroke:#084,color:#fff
   classDef todo fill:#eee,stroke:#999,color:#555
-  class res,gw,id,cat,resdb,iddb,catdb done
-  class web,ord,wr,notif,kafka,redis,orddb todo
+  class res,gw,id,cat,ord,resdb,iddb,catdb,orddb done
+  class web,wr,notif,kafka,redis todo
 ```
 
 `catalog` and `reservation` are separate because seatmap reads outnumber seat writes by roughly
@@ -217,7 +260,29 @@ stale result, because that combination is a client bug that should surface loudl
 
 ---
 
-## 5. Authentication and authorization
+## 5. Payments (Razorpay, manual capture)
+
+```
+hold → order → authorization → SEAT FINALIZED → capture → confirmed
+```
+
+The order of the last three is the whole design. The seat is taken **before** any money moves, so
+the failure mode is "authorization released" and never "customer charged for a seat someone else
+owns".
+
+Webhook handling follows PRD §10.3 exactly, and the route **physically cannot see a parsed body**:
+it is registered in its own plugin scope whose content-type parser hands over the raw `Buffer`.
+Razorpay HMACs the exact bytes it sent, so parsing and re-serialising reorders keys and changes
+whitespace, producing a different digest — legitimate traffic then fails verification and looks
+like an attack. A unit test asserts that a re-serialised body is rejected.
+
+Seat finalization, hold extension and hold lookup require an internal service token and are not
+reachable with a user token. A user who could call finalize directly could take a seat without
+paying for it.
+
+---
+
+## 6. Authentication and authorization
 
 Access tokens are **RS256, 10 minutes**. Refresh tokens are opaque 32-byte values, stored only as
 a SHA-256 digest, valid 14 days, and **rotated on every use** with family-wide reuse detection.
@@ -246,7 +311,7 @@ Permissions are **resource-scoped**, never flat globals — holding `organizer` 
 
 ---
 
-## 6. Quickstart
+## 7. Quickstart
 
 Requires Node 22+, pnpm, and a Docker daemon for the integration tests.
 
@@ -269,7 +334,7 @@ databases would be the first crack in database-per-service. It is safe to re-run
 
 ---
 
-## 7. Documentation
+## 8. Documentation
 
 | Document | Contents |
 |---|---|
@@ -281,27 +346,31 @@ databases would be the first crack in database-per-service. It is safe to re-run
 
 ---
 
-## 8. Invariants
+## 9. Invariants
 
 | ID | Invariant | Enforced by | Status |
 |---|---|---|---|
 | INV-1 | A seat is never `sold` under more than one order | Conditional `UPDATE` + one `order_id` per seat row + `oversell_total` | ✅ proven |
 | INV-2 | A seat is never `held` by two holds at once | Conditional `UPDATE`, row locks, all-or-nothing basket | ✅ proven |
-| INV-3 | Money is never captured without a `sold` seat | Finalize-then-capture, manual capture | phase 3 |
-| INV-4 | A seat is never `sold` without captured payment | Compensation path | phase 3 |
+| INV-3 | Money is never captured without a `sold` seat | Finalize-then-capture, manual capture | ✅ proven |
+| INV-4 | A seat is never `sold` without captured payment | Compensation path | ✅ proven |
 | INV-5 | An expired hold never blocks another buyer | `held_until < now()` predicate, no reaper | ✅ proven |
-| INV-6 | Idempotent replay causes no extra side effects | `idempotency_keys` + body hash | ✅ proven (reservation, seed) |
+| INV-6 | Idempotent replay causes no extra side effects | `idempotency_keys` + body hash, `processed_webhooks` | ✅ proven |
 | INV-7 | Correctness never depends on Redis, Kafka or a job | Postgres-only correctness path | ✅ proven for Phase 1 scope |
 | INV-8 | No overlapping *sold* occupancies (segmented mode) | GiST `EXCLUDE` constraint | phase 8 |
 
 ---
 
-## 9. Known limitations
+## 10. Known limitations
 
 Carried from [`DECISIONS.md`](DECISIONS.md) and tracked honestly as the build proceeds.
 
-- Phases 3–8 are not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
+- Phases 4–8 are not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
 - The `jti` denylist and rate limiting are in-process until Redis arrives in Phase 5, so both are per-replica rather than shared.
 - Seat writes are single-node. Sharding by `event_id` is the natural next step and is unimplemented.
 - The outbox relay (Phase 4) will poll every 500 ms; CDC would be lower latency.
 - No distributed tracing — `requestId` propagation is the deliberate substitute ([ADR-015](DECISIONS.md)).
+- Razorpay exposes no explicit *void*; declining to capture achieves the same outcome (no money
+  moves) and is recorded as `authorization_released`. See the ADR-007 implementation note.
+- Outbound Razorpay calls are not retried idempotently, so a network timeout during capture needs
+  reconciliation against Razorpay's API. A reconciliation job is future work.

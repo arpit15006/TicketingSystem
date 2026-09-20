@@ -75,7 +75,7 @@ describe('hold expiry is a predicate, not a job', () => {
     // may already own by now.
     const extend = await fetch(`${harness.baseUrl}/holds/${first.body.holdId}/extend`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json', ...(await harness.auth()) },
+      headers: { 'content-type': 'application/json', ...harness.serviceHeaders },
       body: JSON.stringify({ seconds: 600 }),
     });
     expect(extend.status).toBe(409);
@@ -87,7 +87,7 @@ describe('hold expiry is a predicate, not a job', () => {
 
     const extend = await fetch(`${harness.baseUrl}/holds/${first.body.holdId}/extend`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json', ...(await harness.auth()) },
+      headers: { 'content-type': 'application/json', ...harness.serviceHeaders },
       body: JSON.stringify({ seconds: 1200 }),
     });
     expect(extend.status).toBe(200);

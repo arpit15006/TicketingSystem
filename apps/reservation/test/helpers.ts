@@ -8,6 +8,8 @@ import { createPool } from '../src/db.js';
 import { buildServer, type ReservationServer } from '../src/server.js';
 import { resetCounters } from '../src/metrics.js';
 
+export const TEST_SERVICE_TOKEN = 'test-internal-service-token';
+
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations', import.meta.url));
 
 export interface Harness {
@@ -19,6 +21,8 @@ export interface Harness {
   identity: TestIdentity;
   /** Authorization header for an attendee — what a booking request needs. */
   auth: (userId?: string) => Promise<Record<string, string>>;
+  /** Header proving a caller is another service — required by internal routes. */
+  serviceHeaders: Record<string, string>;
   stop: () => Promise<void>;
 }
 
@@ -41,6 +45,7 @@ export async function startHarness(options: { holdDurationSeconds?: number } = {
     jwksUri: identity.jwksUri,
     jwtIssuer: identity.issuer,
     jwtAudience: identity.audience,
+    internalServiceToken: TEST_SERVICE_TOKEN,
     // Enough connections that the pool is not the bottleneck the test accidentally
     // measures; Postgres is configured for 300 backends.
     pgPoolMax: 60,
@@ -64,6 +69,7 @@ export async function startHarness(options: { holdDurationSeconds?: number } = {
     baseUrl: `http://127.0.0.1:${address.port}`,
     identity,
     auth: identity.attendee,
+    serviceHeaders: { 'x-internal-token': TEST_SERVICE_TOKEN },
     stop: async () => {
       // Order matters: DROP DATABASE ... WITH FORCE terminates any surviving backend,
       // which surfaces as an uncaught 57P01 on whatever connection was still open.

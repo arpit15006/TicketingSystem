@@ -42,3 +42,9 @@ jobs:
 
       - name: The oversell proof
         run: pnpm test:oversell
+
+      - name: The webhook replay proof
+        run: pnpm vitest run --project integration webhook-replay
+
+      - name: The payment-after-expiry compensation proof
+        run: pnpm vitest run --project integration expiry-boundary

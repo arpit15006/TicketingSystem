@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { startStack, type Stack } from '../stack.js';
+import { startStack, type Stack } from '../../../../test/stack.js';
 import { loadConfig as loadGatewayConfig } from '../../src/config.js';
 import { buildServer as buildGateway } from '../../src/server.js';
 

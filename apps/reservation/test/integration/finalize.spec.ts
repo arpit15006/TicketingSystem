@@ -24,7 +24,7 @@ describe('finalize', () => {
   const finalize = async (holdId: string, orderId: string): Promise<{ status: number; body: any }> => {
     const response = await fetch(`${harness.baseUrl}/reservations/${holdId}/finalize`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...harness.serviceHeaders },
       body: JSON.stringify({ orderId }),
     });
     return { status: response.status, body: await response.json() };
@@ -128,6 +128,34 @@ describe('finalize', () => {
 
     const metrics = await fetch(`${harness.baseUrl}/metrics`).then((r) => r.text());
     expect(metrics).toContain('oversell_total 0');
+  });
+
+  it('is idempotent: finalizing the same hold and order twice issues one sale', async () => {
+    const { eventId, seatIds } = await seedSeats(harness.pool, 2);
+    const created = await hold(eventId, [seatIds[0]!, seatIds[1]!]);
+    const orderId = randomUUID();
+
+    const first = await finalize(created.holdId, orderId);
+    const replay = await finalize(created.holdId, orderId);
+
+    // At-least-once webhook delivery means this WILL happen in production. A
+    // second call reporting failure would push a paid order into compensation.
+    expect(first.status).toBe(200);
+    expect(replay.status).toBe(200);
+    expect(replay.body.soldSeatIds.sort()).toEqual(first.body.soldSeatIds.sort());
+
+    const sold = await harness.pool.query<{ count: string }>(
+      `SELECT count(*) FROM seats WHERE event_id = $1 AND status = 'sold' AND order_id = $2`,
+      [eventId, orderId],
+    );
+    expect(Number(sold.rows[0]?.count)).toBe(2);
+
+    // Still exactly one SeatSold event: a replay must not re-emit.
+    const outbox = await harness.pool.query<{ count: string }>(
+      `SELECT count(*) FROM outbox WHERE event_type = 'SeatSold' AND aggregate_id = $1`,
+      [eventId],
+    );
+    expect(Number(outbox.rows[0]?.count)).toBe(1);
   });
 
   it('returns 404 for a hold that never existed', async () => {

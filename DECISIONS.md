@@ -107,6 +107,15 @@ A janitor job still runs every 60 seconds to tidy stale rows, but it's cosmetic.
 
 **Cost accepted:** Authorizations expire (typically ~5 days) and must be captured or voided within that window, so an unresolved order can't sit indefinitely. Also more states to model.
 
+**Implementation note (added during Phase 3):** Razorpay exposes no explicit *void*
+endpoint for an authorized payment. The outcome this ADR describes is still exactly what
+happens, by a slightly different mechanism: an authorization that is never captured expires on
+its own (typically ~5 days), so declining to capture *is* the release — no money ever leaves the
+customer's account, and there is no refund to settle. The compensation path therefore records
+`releaseAction: 'authorization_released'` for the normal case, and falls back to a real refund
+only when the payment was somehow already captured. Both branches are tested in
+`expiry-boundary.spec.ts`.
+
 **Related:** Signature verification requires the raw request body, because Razorpay HMACs the exact bytes it sent. Any JSON parse-then-reserialize changes key order and whitespace and breaks verification. Fastify needs a custom content-type parser preserving the raw `Buffer`. This is the most common implementation bug in Razorpay integrations.
 
 ---

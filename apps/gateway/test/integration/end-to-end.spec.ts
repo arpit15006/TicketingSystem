@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { startStack, makePlatformAdmin, type Stack } from '../stack.js';
+import { startStack, makePlatformAdmin, type Stack } from '../../../../test/stack.js';
 
 /**
  * PRD §16 Phase 2 acceptance — **an authenticated end-to-end seat hold through the

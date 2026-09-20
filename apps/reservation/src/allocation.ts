@@ -231,6 +231,25 @@ export async function finalizeHold(params: FinalizeParams): Promise<FinalizeResu
   const hold = holdRow.rows[0];
   if (hold === undefined) return { finalized: [], expected: 0 };
 
+  // Finalization must be IDEMPOTENT.
+  //
+  // Kafka delivery is at-least-once and payment webhooks are redelivered by design
+  // (ADR-005, ADR-009), so the orders service will call this more than once for the
+  // same sale. If an already-converted hold reported failure, a replayed webhook
+  // would drive a confirmed order into the compensation path and hand back a seat
+  // the customer has already paid for.
+  //
+  // Note the `order_id = $2` condition: this reports success only when the seats
+  // are sold to THIS order. Sold to a different order means the seat really was
+  // lost, which is still a 410 and still compensates.
+  if (hold.status === 'converted') {
+    const already = await client.query<{ seat_id: string }>(
+      `SELECT seat_id FROM seats WHERE seat_id = ANY($1) AND status = 'sold' AND order_id = $2`,
+      [hold.seat_ids, orderId],
+    );
+    return { finalized: already.rows.map((r) => r.seat_id), expected: hold.seat_ids.length };
+  }
+
   const sold = await client.query<{ seat_id: string }>(FINALIZE_SALE_SQL, [orderId, hold.seat_ids, holdId]);
 
   if (sold.rowCount !== hold.seat_ids.length) {

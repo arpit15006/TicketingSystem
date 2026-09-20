@@ -47,6 +47,9 @@ export async function createTestDatabase(args: {
   });
 
   const pool = new Pool({ connectionString: url, max: 20 });
+  // DROP DATABASE ... WITH FORCE terminates live backends (57P01). Without a
+  // listener that arrives as an uncaught exception and fails an otherwise green run.
+  pool.on('error', () => {});
 
   return {
     url,

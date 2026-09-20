@@ -11,12 +11,21 @@ importers:
       '@eslint/js':
         specifier: ^9.39.1
         version: 9.39.5
+      '@ticketing/testkit':
+        specifier: workspace:*
+        version: link:packages/testkit
       '@types/node':
         specifier: ^22.19.2
         version: 22.20.4
+      '@types/pg':
+        specifier: ^8.15.6
+        version: 8.23.1
       eslint:
         specifier: ^9.39.1
         version: 9.39.5
+      pg:
+        specifier: ^8.16.3
+        version: 8.23.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -127,6 +136,43 @@ importers:
       jose:
         specifier: ^6.1.0
         version: 6.2.12
+      node-pg-migrate:
+        specifier: ^8.0.3
+        version: 8.0.4(@types/pg@8.23.1)(pg@8.23.0)
+      pg:
+        specifier: ^8.16.3
+        version: 8.23.0
+      pino:
+        specifier: ^9.13.1
+        version: 9.14.0
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.15.6
+        version: 8.23.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  apps/orders:
+    dependencies:
+      '@fastify/type-provider-typebox':
+        specifier: ^5.2.0
+        version: 5.2.0(@sinclair/typebox@0.34.52)
+      '@sinclair/typebox':
+        specifier: ^0.34.41
+        version: 0.34.52
+      '@ticketing/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@ticketing/http':
+        specifier: workspace:*
+        version: link:../../packages/http
+      '@ticketing/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      fastify:
+        specifier: ^5.6.1
+        version: 5.12.5
       node-pg-migrate:
         specifier: ^8.0.3
         version: 8.0.4(@types/pg@8.23.1)(pg@8.23.0)

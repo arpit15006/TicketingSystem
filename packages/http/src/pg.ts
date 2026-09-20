@@ -11,10 +11,12 @@ export interface PoolOptions {
   databaseUrl: string;
   max?: number;
   statementTimeoutMs?: number;
+  /** Called when an IDLE pooled client errors. See the note in createPool. */
+  onError?: (error: Error) => void;
 }
 
 export function createPool(options: PoolOptions): pg.Pool {
-  return new Pool({
+  const pool = new Pool({
     connectionString: options.databaseUrl,
     max: options.max ?? 20,
     statement_timeout: options.statementTimeoutMs ?? 10_000,
@@ -23,6 +25,26 @@ export function createPool(options: PoolOptions): pg.Pool {
     connectionTimeoutMillis: 10_000,
     idleTimeoutMillis: 30_000,
   });
+
+  /*
+   * An idle pooled client can error without any query being in flight — Postgres
+   * restarts, a failover, an admin terminating backends (57P01), a network blip.
+   *
+   * `Pool` emits that as an 'error' event, and an EventEmitter 'error' with no
+   * listener is an UNCAUGHT EXCEPTION that takes the process down. So a database
+   * restart would kill every service at once, turning a recoverable blip into a
+   * full outage. The pool discards the broken client and carries on by itself; all
+   * this listener has to do is exist.
+   */
+  pool.on('error', (error: Error) => {
+    if (options.onError !== undefined) {
+      options.onError(error);
+      return;
+    }
+    process.stderr.write(`${JSON.stringify({ level: 'warn', msg: 'idle pg client error', err: error.message })}\n`);
+  });
+
+  return pool;
 }
 
 /** Postgres error codes this codebase reacts to by name rather than by number. */

@@ -21,6 +21,8 @@ export interface Config {
   jwksUri: string;
   jwtIssuer: string;
   jwtAudience: string;
+  /** Shared secret proving a caller is another service, not an end user. */
+  internalServiceToken: string;
   logLevel: string;
   nodeEnv: string;
 }
@@ -46,6 +48,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     jwksUri: process.env['JWKS_URI'] ?? 'http://localhost:3001/.well-known/jwks.json',
     jwtIssuer: process.env['JWT_ISSUER'] ?? 'http://localhost:3001',
     jwtAudience: process.env['JWT_AUDIENCE'] ?? 'ticketing',
+    internalServiceToken: process.env['INTERNAL_SERVICE_TOKEN'] ?? 'dev-internal-service-token-change-me',
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',
     ...overrides,

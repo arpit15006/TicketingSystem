@@ -11,8 +11,8 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 | Phase 0 | Repository / architecture audit | ✅ VERIFIED |
 | Phase 1 | Reservation core ★ | ✅ VERIFIED |
 | Phase 2 | Identity + Catalog + Gateway | ✅ VERIFIED |
-| Phase 3 | Orders + Razorpay | 🔄 NEXT — Phase 2 gate passed |
-| Phase 4 | Kafka + outbox + notification | ⏳ BLOCKED — awaits Phase 3 |
+| Phase 3 | Orders + Razorpay | ✅ VERIFIED |
+| Phase 4 | Kafka + outbox + notification | 🔄 NEXT — Phase 3 gate passed |
 | Phase 5 | Waiting room | ⏳ BLOCKED — awaits Phase 4 |
 | Phase 6 | Frontend | ⛔ HOLD — user asked to be consulted before this phase begins |
 | Phase 7 | Proof + chaos + load | ⏳ BLOCKED — awaits Phase 6 |
@@ -24,10 +24,10 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 |---|---|---|---|
 | INV-1 | No seat sold twice | `oversell.spec.ts`, `finalize.spec.ts` | ✅ PROVEN — 1000 vs 100 → 100/900, `oversell_total 0` |
 | INV-2 | No simultaneous duplicate holds | `oversell.spec.ts`, `basket-atomicity.spec.ts` | ✅ PROVEN — one hold per seat, no overlapping live holds |
-| INV-3 | No capture without a sold seat | `expiry-boundary.spec.ts` | ⏳ not yet proven |
-| INV-4 | No sold seat without captured payment | `expiry-boundary.spec.ts` | ⏳ not yet proven |
+| INV-3 | No capture without a sold seat | `expiry-boundary.spec.ts` | ✅ PROVEN — finalize precedes capture; 0 captures when the seat is lost |
+| INV-4 | No sold seat without captured payment | `expiry-boundary.spec.ts` | ✅ PROVEN — compensation releases or refunds and never leaves a sold unpaid seat |
 | INV-5 | Expired hold never blocks a buyer | `expiry.spec.ts` | ✅ PROVEN — janitor disabled throughout |
-| INV-6 | Idempotent replay has no extra effects | `idempotency.spec.ts`, `webhook-replay.spec.ts` | 🟡 PARTIAL — proven for reservation and the seed; webhooks are Phase 3 |
+| INV-6 | Idempotent replay has no extra effects | `idempotency.spec.ts`, `webhook-replay.spec.ts` | ✅ PROVEN — 50 replays (sequential AND concurrent) → 1 ticket, 1 capture |
 | INV-7 | Correctness independent of Redis/Kafka/jobs | `chaos-redis.spec.ts` + Kafka-kill | 🟡 PARTIAL — Phase 1 has no Redis/Kafka at all and the janitor is off in every test |
 | INV-8 | No overlapping sold occupancy (segmented) | `segment-exclusion.spec.ts` | ⏳ not yet proven in-project — constraint mechanism demonstrated in the Phase 0 spike |
 
@@ -343,3 +343,92 @@ determinism         : 3 consecutive full runs, 68/68 each
 **Decision**
 
 **PHASE 2 VERIFIED — PROCEED TO PHASE 3**
+
+
+---
+
+## PHASE 3 VERIFICATION REPORT
+
+**Implementation**
+- [x] Order state machine: `created → awaiting_payment → payment_authorized → confirmed`, plus `compensating → refunded_seat_lost`, `failed`, `cancelled`
+- [x] `orders`, `processed_webhooks`, `tickets` (**UNIQUE seat_id**), `idempotency_keys`, `outbox`
+- [x] Partial unique index `orders_one_live_per_hold` — a double-tapped checkout cannot open two payment intents on one hold
+- [x] `POST /orders` — `Idempotency-Key`, ownership check, **refuses below 90s of remaining hold**, extends the hold, creates a Razorpay order with `payment_capture: 0`
+- [x] `POST /orders/:id/verify` — HMAC of `order_id|payment_id`, then **finalize → capture → confirm**, never the other order
+- [x] `POST /orders/webhooks/razorpay` — **raw `Buffer` body, signature verified before anything parses it**
+- [x] `x-razorpay-event-id` claimed by INSERT *before* processing; duplicate key ⇒ `200` and no side effects
+- [x] Handles `payment.authorized`, `payment.captured`, `payment.failed`, `refund.processed`; **always `200`** for unhandled types
+- [x] Compensation path (PRD §10.4) → release or refund → `refunded_seat_lost` → `OrderCompensated` outbox → logged as `payment.after_expiry.compensated`
+- [x] Tickets with QR tokens; `GET /orders/:id` owner-scoped
+- [x] `requireServiceToken` — finalize, extend and hold lookup are service-to-service only, never reachable with a user token
+- [x] **`finalizeHold` made idempotent** in reservation, since at-least-once delivery guarantees repeat calls
+
+**Tests — 97 passing across 16 files (was 68 across 12)**
+- [x] `webhook-replay.spec.ts` (6) — **mandatory**: 50 sequential *and* 50 concurrent deliveries → 1 ticket, 1 capture; re-serialised body rejected; unsigned/wrong-secret rejected; unhandled types acknowledged; browser-closed customer still confirmed by webhook alone
+- [x] `expiry-boundary.spec.ts` (5) — **mandatory**: seat lost between authorization and finalization → compensated, **0 captures**, clear user message, rival holds the seat, `oversell_total 0`; captured-payment branch refunds; sub-90s refusal; hold extension; late webhook cannot resurrect a compensated order
+- [x] `orders.spec.ts` (10) — happy path, idempotent replay, key reuse `422`, duplicate order `409`, buying another user's hold `403`, forged signature, signature for the wrong order, double verify, order privacy, key secret never leaked
+- [x] `signatures.spec.ts` (7, unit) — including the re-serialised-body failure that PRD §10.3 calls the most common bug
+- [x] Phases 1–2 suites (69) — all unchanged and passing
+
+**Acceptance criteria (PRD §16 Phase 3)**
+- [x] `webhook-replay.spec.ts` passes
+- [x] `expiry-boundary.spec.ts` passes
+- [x] Raw-body signature verification, manual capture, compensation path all proven
+
+**Regression**
+- [x] Full suite run **four consecutive times**: 97/97 each, `{"201":100,"409":900}`, `oversell_total 0`
+
+**Guardrails audited (PRD §19)**
+- [x] No ORM · no Redis · no background job on the correctness path
+- [x] **Webhook body is never parsed before its signature is verified** — the route receives a raw `Buffer`, enforced by an encapsulated content-type parser
+- [x] Gateway makes no authorization decision; no service reads another's database
+- [x] No invented numbers
+
+**Commands executed**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm build
+pnpm vitest run --project integration webhook-replay
+pnpm vitest run --project integration expiry-boundary
+pnpm test   # x4
+```
+
+**Results**
+
+```
+typecheck : clean      lint : clean      build : 9/9 workspace projects
+
+ Test Files  16 passed (16)
+      Tests  97 passed (97)
+
+determinism: 4 consecutive full runs, 97/97, zero unhandled errors
+```
+
+**Defects found and fixed during this phase**
+
+1. **Production bug — an idle `pg` client error would crash any service.** Surfaced as an
+   intermittent non-zero exit on a fully green run (`57P01` during teardown). `Pool` emits
+   `error` for idle clients when Postgres restarts, fails over, or terminates backends, and an
+   EventEmitter `error` with no listener is an uncaught exception. A database blip would have
+   taken down every service at once. `createPool` now always attaches a handler. **This was a
+   genuine resilience hole that a flaky test exposed** — worth stating plainly rather than
+   retrying the suite until it went green.
+2. **Idempotent finalization was missing.** With at-least-once webhooks, a replay would have hit
+   an already-converted hold, received `410`, and pushed a *confirmed, paid* order into
+   compensation — handing back a seat the customer had paid for. `finalizeHold` now reports
+   success when the hold is already converted **to that same order**, and still returns `410`
+   when the seats went to a different one.
+
+**Known issues / limitations**
+- Razorpay has no explicit void endpoint. Declining to capture achieves the same outcome (no money
+  moves, the authorization lapses); recorded as `releaseAction: 'authorization_released'` and
+  documented under ADR-007. A real refund is used when the payment was already captured.
+- Outbound Razorpay calls are not retried idempotently: a network timeout during capture needs
+  reconciliation against Razorpay's API. Already listed in `DECISIONS.md` known limitation #7.
+- `RAZORPAY_WEBHOOK_SECRET` is not yet set. It is generated in the Razorpay dashboard and is a
+  *different* secret from the API key secret; webhooks against the real Razorpay will fail until
+  it is configured. Tests are unaffected — they sign with a real HMAC over a known secret.
+
+**Decision**
+
+**PHASE 3 VERIFIED — PROCEED TO PHASE 4**

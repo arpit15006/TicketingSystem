@@ -10,6 +10,7 @@ import {
   errorHandlerPlugin,
   authPlugin,
   requirePermission,
+  requireServiceToken,
   runIdempotent,
   hashRequest,
   IDEMPOTENCY_KEY_HEADER,
@@ -91,6 +92,10 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
     issuer: config.jwtIssuer,
     audience: config.jwtAudience,
   });
+
+  // Finalization and hold mutation are service-to-service only: a user able to
+  // call finalize directly could take a seat without ever paying for it.
+  const internalOnly = requireServiceToken(config.internalServiceToken);
 
   app.get('/healthz', async () => ({ status: 'ok', service: 'reservation' }));
 
@@ -306,7 +311,10 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
 
   app.post(
     '/reservations/:holdId/finalize',
-    { schema: { params: Type.Object({ holdId: UUID }), body: Type.Object({ orderId: UUID }, { additionalProperties: false }) } },
+    {
+      schema: { params: Type.Object({ holdId: UUID }), body: Type.Object({ orderId: UUID }, { additionalProperties: false }) },
+      preHandler: internalOnly,
+    },
     async (req, reply) => {
       const { holdId } = req.params;
       const { orderId } = req.body;
@@ -334,6 +342,47 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
     },
   );
 
+  /* ----------------------------------------------------- GET /holds/:holdId */
+
+  /**
+   * Internal: the orders service needs a hold's seats, tiers and expiry to price
+   * an order and to apply the 90-second rule (PRD §10.1.3). Tier ids are returned
+   * rather than prices — pricing belongs to catalog, and reservation must not
+   * start holding a second copy of it.
+   */
+  app.get(
+    '/holds/:holdId',
+    { schema: { params: Type.Object({ holdId: UUID }) }, preHandler: internalOnly },
+    async (req) => {
+      const { holdId } = req.params;
+      const found = await pool.query<{
+        hold_id: string;
+        event_id: string;
+        user_id: string;
+        seat_ids: string[];
+        status: string;
+        expires_at: Date;
+      }>(`SELECT hold_id, event_id, user_id, seat_ids, status, expires_at FROM holds WHERE hold_id = $1`, [holdId]);
+
+      const hold = found.rows[0];
+      if (hold === undefined) throw holdNotFound(holdId);
+
+      const seats = await pool.query<{ seat_id: string; tier_id: string; status: string }>(
+        `SELECT seat_id, tier_id, status FROM seats WHERE seat_id = ANY($1) ORDER BY seat_id`,
+        [hold.seat_ids],
+      );
+
+      return {
+        holdId: hold.hold_id,
+        eventId: hold.event_id,
+        userId: hold.user_id,
+        status: hold.status,
+        expiresAt: hold.expires_at.toISOString(),
+        seats: seats.rows.map((row) => ({ seatId: row.seat_id, tierId: row.tier_id, status: row.status })),
+      };
+    },
+  );
+
   /* ------------------------------------------------ PATCH /holds/:holdId/extend */
 
   app.patch(
@@ -343,6 +392,7 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
         params: Type.Object({ holdId: UUID }),
         body: Type.Object({ seconds: Type.Integer({ minimum: 1, maximum: 3600 }) }, { additionalProperties: false }),
       },
+      preHandler: internalOnly,
     },
     async (req, reply) => {
       const { holdId } = req.params;
