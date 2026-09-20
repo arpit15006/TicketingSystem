@@ -7,6 +7,7 @@ const alias = {
   '@ticketing/contracts': src('contracts'),
   '@ticketing/logger': src('logger'),
   '@ticketing/http': src('http'),
+  '@ticketing/kafka': src('kafka'),
   '@ticketing/testkit': src('testkit'),
 };
 

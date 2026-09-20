@@ -1,3 +1,4 @@
+import { createKafkaProducer, createOutboxRelay } from '@ticketing/kafka';
 import { loadConfig } from './config.js';
 import { createPool } from './db.js';
 import { buildServer } from './server.js';
@@ -9,9 +10,23 @@ const app = await buildServer({ config, pool });
 
 const stopJanitor = config.janitorEnabled ? startJanitor(pool, app.log, config.janitorIntervalMs) : () => {};
 
+// ADR-005 — publishes rows the transactions already committed. If this worker
+// never runs, nothing is lost and nothing oversells; the events simply wait.
+const relay = config.outboxRelayEnabled
+  ? createOutboxRelay({
+      pool,
+      publisher: createKafkaProducer({ brokers: config.kafkaBrokers, clientId: 'reservation-relay' }),
+      serviceName: 'reservation',
+      intervalMs: config.outboxRelayIntervalMs,
+      logger: app.log,
+    })
+  : null;
+relay?.start();
+
 const shutdown = async (signal: string): Promise<void> => {
   app.log.info({ signal }, 'shutting down');
   stopJanitor();
+  await relay?.stop();
   await app.close();
   await pool.end();
   process.exit(0);

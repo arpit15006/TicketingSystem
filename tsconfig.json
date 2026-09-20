@@ -9,6 +9,7 @@
       "@ticketing/contracts": ["packages/contracts/src/index.ts"],
       "@ticketing/logger": ["packages/logger/src/index.ts"],
       "@ticketing/http": ["packages/http/src/index.ts"],
+      "@ticketing/kafka": ["packages/kafka/src/index.ts"],
       "@ticketing/testkit": ["packages/testkit/src/index.ts"]
     },
     "types": ["node"]

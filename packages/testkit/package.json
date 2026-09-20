@@ -20,14 +20,18 @@
   },
   "dependencies": {
     "@testcontainers/postgresql": "^11.7.1",
+    "@testcontainers/redpanda": "^12.1.0",
+    "@ticketing/contracts": "workspace:*",
+    "dockerode": "^5.0.1",
+    "jose": "^6.1.0",
+    "kafkajs": "^2.2.4",
     "node-pg-migrate": "^8.0.3",
     "pg": "^8.16.3",
     "testcontainers": "^11.7.1",
-    "undici": "^7.17.0",
-    "jose": "^6.1.0",
-    "@ticketing/contracts": "workspace:*"
+    "undici": "^7.17.0"
   },
   "devDependencies": {
+    "@types/dockerode": "^4.0.1",
     "@types/node": "^22.19.2",
     "@types/pg": "^8.15.6",
     "embedded-postgres": "16.14.0-beta.17",

@@ -48,3 +48,6 @@ jobs:
 
       - name: The payment-after-expiry compensation proof
         run: pnpm vitest run --project integration expiry-boundary
+
+      - name: The broker-failure proof (Kafka killed mid-sale)
+        run: pnpm vitest run --project integration chaos-kafka

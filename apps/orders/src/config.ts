@@ -29,6 +29,10 @@ export interface Config {
   minHoldSecondsForOrder: number;
   /** PRD §10.1.4 — extend the hold when the payment intent is created. */
   holdExtensionSeconds: number;
+  kafkaBrokers: string[];
+  /** ADR-005 — the relay is a background worker; nothing on the correctness path. */
+  outboxRelayEnabled: boolean;
+  outboxRelayIntervalMs: number;
   logLevel: string;
   nodeEnv: string;
 }
@@ -55,6 +59,9 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     currency: process.env['CURRENCY'] ?? 'INR',
     minHoldSecondsForOrder: int('MIN_HOLD_SECONDS_FOR_ORDER', 90),
     holdExtensionSeconds: int('HOLD_EXTENSION_SECONDS', 600),
+    kafkaBrokers: (process.env['KAFKA_BROKERS'] ?? 'localhost:9092').split(',').map((broker) => broker.trim()),
+    outboxRelayEnabled: (process.env['OUTBOX_RELAY_ENABLED'] ?? 'true') === 'true',
+    outboxRelayIntervalMs: int('OUTBOX_RELAY_INTERVAL_MS', 500),
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',
     ...overrides,

@@ -1,4 +1,5 @@
 import { createPool } from '@ticketing/http';
+import { createKafkaProducer, createOutboxRelay } from '@ticketing/kafka';
 import { loadConfig } from './config.js';
 import { buildServer } from './server.js';
 import { createRazorpayClient } from './razorpay.js';
@@ -22,8 +23,20 @@ const app = await buildServer({
   catalog: createCatalogClient({ baseUrl: config.catalogUrl }),
 });
 
+const relay = config.outboxRelayEnabled
+  ? createOutboxRelay({
+      pool,
+      publisher: createKafkaProducer({ brokers: config.kafkaBrokers, clientId: 'orders-relay' }),
+      serviceName: 'orders',
+      intervalMs: config.outboxRelayIntervalMs,
+      logger: app.log,
+    })
+  : null;
+relay?.start();
+
 const shutdown = async (signal: string): Promise<void> => {
   app.log.info({ signal }, 'shutting down');
+  await relay?.stop();
   await app.close();
   await pool.end();
   process.exit(0);

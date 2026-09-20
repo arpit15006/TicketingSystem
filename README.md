@@ -5,7 +5,7 @@ It sells seats for events under one defining constraint: **a seat must never be 
 under a thousand simultaneous buyers, not when a service crashes, not when Redis is down, and not
 when a payment settles after the buyer's hold has already expired.
 
-> **Build status: Phases 1–3 of 8 complete and verified.** This README grows one phase at a time, and
+> **Build status: Phases 1–4 of 8 complete and verified.** This README grows one phase at a time, and
 > every number in it is copied from a real command's output. Sections belonging to unbuilt phases
 > say so rather than describing something that does not exist yet.
 > Progress: [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
@@ -78,20 +78,22 @@ resulting RSTs measure macOS, not seat allocation.)
 | Webhook replay ×50 → one ticket, one capture | 3 | ✅ verified |
 | Payment-after-expiry compensation | 3 | ✅ verified |
 | Raw-body webhook signature verification | 3 | ✅ verified |
+| Kafka broker killed mid-sale → zero events lost | 4 | ✅ verified |
+| Idempotent consumers under redelivery | 4 | ✅ verified |
+| `requestId` traced through Kafka into the consumer | 4 | ✅ verified |
 | Resource-scoped authorization | 2 | ✅ verified |
 | Authenticated booking end to end through the gateway | 2 | ✅ verified |
 | 5,000-seat seed | 2 | ✅ verified |
-| Kafka broker failure and recovery | 4 | not built yet |
 | Redis failure → zero oversells | 5 | not built yet |
 | k6 load test, real p50/p95/p99 | 7 | not built yet |
 | `requestId` traced end to end | 7 | not built yet |
 
-Full suite through Phase 3: **97 tests passing**, run four consecutive times with identical
+Full suite through Phase 4: **106 tests passing**, run four consecutive times with identical
 results, Phase 1's proof unchanged throughout.
 
 ```
- Test Files  16 passed (16)
-      Tests  97 passed (97)
+ Test Files  18 passed (18)
+      Tests  106 passed (106)
 ```
 
 ### 1.3 A stolen refresh token is usable at most once
@@ -151,6 +153,26 @@ distributed lock anywhere:
 - seat finalization is idempotent
 - capture reads the payment's state first
 - `tickets.seat_id` is `UNIQUE`, the backstop that holds even if every guard above failed
+
+### 1.6 The broker dies and nothing is lost
+
+The Phase 4 gate kills a real Redpanda broker mid-sale:
+
+```
+broker killed  →  20 seats still allocated successfully   ← INV-7: Kafka is not on the
+               →  25 events pile up in the outbox            correctness path at all
+               →  5 relay cycles run, all fail
+               →  published_at stays NULL for all 25       ← nothing marked sent that wasn't
+broker revived →  all 25 publish, no intervention
+               →  processed_events = 25, notifications = 25, duplicate event_ids = 0
+```
+
+The seats during the outage are allocated with the *real* `ACQUIRE_HOLD_SQL` imported from the
+reservation service, not a copy — the business keeps selling while the message bus is down.
+
+The outage is driven by observed state rather than a 30-second sleep. Asserting "five relay cycles
+failed and nothing was marked published" is stronger than waiting and hoping, and PRD §19 rules out
+`sleep()` in tests anyway.
 
 ---
 
@@ -223,14 +245,14 @@ graph TD
   ord --> orddb[(orders_db)]
   id --> iddb[(identity_db)]
   cat --> catdb[(catalog_db)]
-  res -.outbox relay.-> kafka{{Redpanda<br/><i>phase 4</i>}}
+  res -.outbox relay.-> kafka{{Redpanda<br/><b>phase 4 ✅</b>}}
   ord -.outbox relay.-> kafka
-  kafka -.-> notif[notification :3006<br/><i>phase 4</i>]
+  kafka -.-> notif[notification :3006<br/><b>phase 4 ✅</b>]
   wr -.queue only.-> redis[(Redis<br/><i>phase 5</i>)]
   classDef done fill:#0b6,stroke:#084,color:#fff
   classDef todo fill:#eee,stroke:#999,color:#555
-  class res,gw,id,cat,ord,resdb,iddb,catdb,orddb done
-  class web,wr,notif,kafka,redis todo
+  class res,gw,id,cat,ord,notif,kafka,resdb,iddb,catdb,orddb done
+  class web,wr,redis todo
 ```
 
 `catalog` and `reservation` are separate because seatmap reads outnumber seat writes by roughly
@@ -282,7 +304,42 @@ paying for it.
 
 ---
 
-## 6. Authentication and authorization
+## 6. Events: the transactional outbox
+
+Writing to Postgres and then publishing to Kafka is a dual write across two systems with no shared
+transaction. If the process dies in between, the seat is sold and no notification ever fires — a
+silent, permanent inconsistency that no retry can detect, because nothing recorded that the event
+was owed.
+
+So the state change and its event commit together, into an `outbox` table, and a relay publishes
+from there:
+
+```
+BEGIN
+  UPDATE seats SET status = 'sold' ...      -- the state change
+  INSERT INTO outbox (...)                  -- and the event it owes
+COMMIT
+
+-- separately, every 500ms:
+BEGIN
+  SELECT ... WHERE published_at IS NULL ORDER BY id LIMIT 100 FOR UPDATE SKIP LOCKED
+  publish to Kafka                          -- if this throws, the UPDATE never runs
+  UPDATE outbox SET published_at = now()
+COMMIT
+```
+
+A failed publish rolls the cycle back, so nothing is ever marked published that was not sent. The
+converse is possible and **accepted**: a publish can succeed and the commit then fail, so a message
+is sent twice. That is why delivery is at-least-once and why **every consumer dedupes on
+`event_id`**.
+
+`event_id` is derived from `<service>-<outbox row id>` rather than generated per attempt. A random
+id would make a retry indistinguishable from a genuinely new event — precisely the distinction
+consumers exist to make.
+
+---
+
+## 7. Authentication and authorization
 
 Access tokens are **RS256, 10 minutes**. Refresh tokens are opaque 32-byte values, stored only as
 a SHA-256 digest, valid 14 days, and **rotated on every use** with family-wide reuse detection.
@@ -311,7 +368,7 @@ Permissions are **resource-scoped**, never flat globals — holding `organizer` 
 
 ---
 
-## 7. Quickstart
+## 8. Quickstart
 
 Requires Node 22+, pnpm, and a Docker daemon for the integration tests.
 
@@ -334,7 +391,7 @@ databases would be the first crack in database-per-service. It is safe to re-run
 
 ---
 
-## 8. Documentation
+## 9. Documentation
 
 | Document | Contents |
 |---|---|
@@ -346,7 +403,7 @@ databases would be the first crack in database-per-service. It is safe to re-run
 
 ---
 
-## 9. Invariants
+## 10. Invariants
 
 | ID | Invariant | Enforced by | Status |
 |---|---|---|---|
@@ -356,19 +413,21 @@ databases would be the first crack in database-per-service. It is safe to re-run
 | INV-4 | A seat is never `sold` without captured payment | Compensation path | ✅ proven |
 | INV-5 | An expired hold never blocks another buyer | `held_until < now()` predicate, no reaper | ✅ proven |
 | INV-6 | Idempotent replay causes no extra side effects | `idempotency_keys` + body hash, `processed_webhooks` | ✅ proven |
-| INV-7 | Correctness never depends on Redis, Kafka or a job | Postgres-only correctness path | ✅ proven for Phase 1 scope |
+| INV-7 | Correctness never depends on Redis, Kafka or a job | Postgres-only correctness path | ✅ proven for Kafka; Redis in phase 5 |
 | INV-8 | No overlapping *sold* occupancies (segmented mode) | GiST `EXCLUDE` constraint | phase 8 |
 
 ---
 
-## 10. Known limitations
+## 11. Known limitations
 
 Carried from [`DECISIONS.md`](DECISIONS.md) and tracked honestly as the build proceeds.
 
-- Phases 4–8 are not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
+- Phases 5–8 are not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
 - The `jti` denylist and rate limiting are in-process until Redis arrives in Phase 5, so both are per-replica rather than shared.
 - Seat writes are single-node. Sharding by `event_id` is the natural next step and is unimplemented.
-- The outbox relay (Phase 4) will poll every 500 ms; CDC would be lower latency.
+- The outbox relay polls every 500 ms, so publish latency is bounded by that; CDC (Debezium) is the lower-latency successor.
+- Published outbox rows are never pruned — a retention job is future work.
+- A permanently unprocessable message would block its partition; a dead-letter topic is the standard next step and is not built.
 - No distributed tracing — `requestId` propagation is the deliberate substitute ([ADR-015](DECISIONS.md)).
 - Razorpay exposes no explicit *void*; declining to capture achieves the same outcome (no money
   moves) and is recorded as `authorization_released`. See the ADR-007 implementation note.

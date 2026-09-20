@@ -12,8 +12,8 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 | Phase 1 | Reservation core ★ | ✅ VERIFIED |
 | Phase 2 | Identity + Catalog + Gateway | ✅ VERIFIED |
 | Phase 3 | Orders + Razorpay | ✅ VERIFIED |
-| Phase 4 | Kafka + outbox + notification | 🔄 NEXT — Phase 3 gate passed |
-| Phase 5 | Waiting room | ⏳ BLOCKED — awaits Phase 4 |
+| Phase 4 | Kafka + outbox + notification | ✅ VERIFIED |
+| Phase 5 | Waiting room | 🔄 NEXT — Phase 4 gate passed |
 | Phase 6 | Frontend | ⛔ HOLD — user asked to be consulted before this phase begins |
 | Phase 7 | Proof + chaos + load | ⏳ BLOCKED — awaits Phase 6 |
 | Phase 8 | Segmented allocation | ⏳ BLOCKED — strictly additive, awaits Phase 7 |
@@ -28,7 +28,7 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 | INV-4 | No sold seat without captured payment | `expiry-boundary.spec.ts` | ✅ PROVEN — compensation releases or refunds and never leaves a sold unpaid seat |
 | INV-5 | Expired hold never blocks a buyer | `expiry.spec.ts` | ✅ PROVEN — janitor disabled throughout |
 | INV-6 | Idempotent replay has no extra effects | `idempotency.spec.ts`, `webhook-replay.spec.ts` | ✅ PROVEN — 50 replays (sequential AND concurrent) → 1 ticket, 1 capture |
-| INV-7 | Correctness independent of Redis/Kafka/jobs | `chaos-redis.spec.ts` + Kafka-kill | 🟡 PARTIAL — Phase 1 has no Redis/Kafka at all and the janitor is off in every test |
+| INV-7 | Correctness independent of Redis/Kafka/jobs | `chaos-redis.spec.ts` + `chaos-kafka.spec.ts` | 🟡 PARTIAL — **Kafka-kill proven**: seats still allocate with the broker dead. Redis chaos is Phase 5 |
 | INV-8 | No overlapping sold occupancy (segmented) | `segment-exclusion.spec.ts` | ⏳ not yet proven in-project — constraint mechanism demonstrated in the Phase 0 spike |
 
 ---
@@ -432,3 +432,99 @@ determinism: 4 consecutive full runs, 97/97, zero unhandled errors
 **Decision**
 
 **PHASE 3 VERIFIED — PROCEED TO PHASE 4**
+
+
+---
+
+## PHASE 4 VERIFICATION REPORT
+
+**Implementation**
+- [x] `packages/kafka` — producer, consumer, event envelope, **outbox relay**
+- [x] Envelope carries `event_id`, `event_type`, `aggregate_id`, `occurred_at`, `request_id` (PRD §11)
+- [x] `event_id` derived as `<service>-<outbox row id>` — **stable across retries**, which is what makes consumer dedupe possible at all
+- [x] Messages keyed by `aggregate_id`, so per-entity ordering is preserved (PRD §11)
+- [x] Relay: `SELECT … WHERE published_at IS NULL ORDER BY id LIMIT 100 FOR UPDATE SKIP LOCKED` → publish → `UPDATE … published_at` — all in one transaction
+- [x] Relay wired into **reservation** and **orders** at boot; `runOnce()` exposed so tests drive it deterministically
+- [x] `notification` service (:3006) with `processed_events` + `notifications`, idempotent consumer, unique index `notifications_one_per_event`
+- [x] Real **Redpanda** via Testcontainers, with pinned host port so a restarted broker returns on the same address
+- [x] Producer drops its connection on send failure so recovery is driven by our retry loop, not by hoping the client heals
+
+**Tests — 106 passing across 18 files (was 97 across 16)**
+- [x] `outbox-relay.spec.ts` (7) — publish → consume → exactly one notification; rows marked published only after the broker accepted them; redelivery produces no second notification; stable `event_id` across attempts and namespaced per service; **`requestId` carried through Kafka into the consumer**; per-aggregate ordering; empty-cycle no-op
+- [x] `chaos-kafka.spec.ts` (2) — **the Phase 4 acceptance gate**
+- [x] Phases 1–3 suites (97) — unchanged and passing
+
+**Acceptance criteria (PRD §16 Phase 4)**
+
+> "Killing the broker for 30s loses zero events; they publish on recovery."
+
+- [x] Broker genuinely stopped (verified by probe, not assumed)
+- [x] 25 events written to the outbox during the outage
+- [x] 5 consecutive relay cycles fail; **`published` stays 0 and `published_at` stays NULL for all 25**
+- [x] **INV-7 proven during the outage** — 20 seats allocated with the broker dead, using the *real* `ACQUIRE_HOLD_SQL` imported from the reservation service
+- [x] Broker revived → all 25 publish with no intervention
+- [x] Consumer receives each exactly once: `processed_events` = 25, `notifications` = 25, **zero duplicate `event_id`s**
+
+The outage is driven by observed state rather than a fixed 30-second sleep — PRD §19 forbids
+`sleep()` in tests, and asserting "five relay cycles failed and nothing was marked published" is
+strictly stronger than waiting 30 seconds and hoping something happened.
+
+**Regression**
+- [x] Full suite run **four times** (once + three determinism runs): 106/106 each, `{"201":100,"409":900}`, `oversell_total 0`, zero unhandled errors
+
+**Guardrails audited (PRD §19)**
+- [x] **No DB + Kafka dual write anywhere** — every event row is written in the same transaction as its state change
+- [x] **At-least-once assumed, never exactly-once** — every consumer dedupes on `event_id`
+- [x] No ORM · Redis still absent · no background job on the correctness path (the relay is explicitly off the correctness path and proven so)
+- [x] No invented numbers
+
+**Commands executed**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm build
+pnpm vitest run --project integration outbox-relay
+pnpm vitest run --project integration chaos-kafka
+pnpm test   # x4
+```
+
+**Results**
+
+```
+typecheck : clean      lint : clean      build : 11/11 workspace projects
+
+ ✓ chaos: the Kafka broker dies mid-sale (2 tests) 24278ms
+ ✓ transactional outbox and idempotent consumption (7 tests) 5305ms
+
+ Test Files  18 passed (18)
+      Tests  106 passed (106)
+   Duration  36.55s
+
+determinism: 4 consecutive full runs, 106/106, zero unhandled errors
+```
+
+**Defects found and fixed during this phase**
+
+1. **The chaos test could not actually kill the broker.** `StartedTestContainer.stop()` is a no-op
+   the *second* time it is called after a `restart()` — testcontainers keeps internal stopped-state
+   that `restart()` does not clear. The test reported the broker as down while it was still serving
+   traffic. Proven with a standalone spike, then fixed by driving Docker directly through
+   `dockerode`. **A chaos test that cannot kill the thing it is chaos-testing is worse than no test
+   at all**, so this mattered more than it looked.
+2. **A restarted container came back on a different host port** (55023 → 55027), because an
+   ephemeral binding is reallocated on restart. Clients pointed at an address that no longer
+   existed, and "events never published" looked like a relay bug. The host port is now pinned, which
+   also matches reality: a real broker returns on the address it left.
+3. **Producer could stay wedged after an outage**, holding stale broker metadata. It now discards
+   the connection on any send failure so the next relay cycle reconnects and rediscovers the cluster.
+
+**Known issues / limitations**
+- The relay polls every 500 ms, so publish latency is bounded by that. CDC (Debezium) is the
+  lower-latency successor, already noted in `DECISIONS.md` limitation #4.
+- Published outbox rows are never pruned; a retention job is future work (also in `DECISIONS.md`).
+- Consumer failures rethrow so the offset does not advance, which is right for transient failures
+  but means a permanently poisonous message would block its partition. A dead-letter topic is the
+  standard next step and is not built.
+
+**Decision**
+
+**PHASE 4 VERIFIED — PROCEED TO PHASE 5**

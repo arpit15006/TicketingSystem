@@ -23,6 +23,10 @@ export interface Config {
   jwtAudience: string;
   /** Shared secret proving a caller is another service, not an end user. */
   internalServiceToken: string;
+  kafkaBrokers: string[];
+  /** ADR-005 — the relay is a background worker; nothing on the correctness path. */
+  outboxRelayEnabled: boolean;
+  outboxRelayIntervalMs: number;
   logLevel: string;
   nodeEnv: string;
 }
@@ -49,6 +53,9 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     jwtIssuer: process.env['JWT_ISSUER'] ?? 'http://localhost:3001',
     jwtAudience: process.env['JWT_AUDIENCE'] ?? 'ticketing',
     internalServiceToken: process.env['INTERNAL_SERVICE_TOKEN'] ?? 'dev-internal-service-token-change-me',
+    kafkaBrokers: (process.env['KAFKA_BROKERS'] ?? 'localhost:9092').split(',').map((broker) => broker.trim()),
+    outboxRelayEnabled: (process.env['OUTBOX_RELAY_ENABLED'] ?? 'true') === 'true',
+    outboxRelayIntervalMs: int('OUTBOX_RELAY_INTERVAL_MS', 500),
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',
     ...overrides,

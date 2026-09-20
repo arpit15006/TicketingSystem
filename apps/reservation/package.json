@@ -18,7 +18,8 @@
     "fastify": "^5.6.1",
     "node-pg-migrate": "^8.0.3",
     "pg": "^8.16.3",
-    "pino": "^9.13.1"
+    "pino": "^9.13.1",
+    "@ticketing/kafka": "workspace:*"
   },
   "devDependencies": {
     "@types/pg": "^8.15.6",
