@@ -1,0 +1,13 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm 10 blocks lifecycle scripts by default. These two genuinely need theirs:
+# the embedded PostgreSQL binaries hydrate symlinks on install (test-only fallback,
+# see docs/ENVIRONMENT_AUDIT.md DEV-2), and esbuild fetches its platform binary.
+onlyBuiltDependencies:
+  - "@embedded-postgres/darwin-arm64"
+  - "@embedded-postgres/linux-x64"
+  - "@embedded-postgres/linux-arm64"
+  - "@embedded-postgres/darwin-x64"
+  - esbuild

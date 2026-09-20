@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # PRD §15.4 — the job is named so the badge reads "does_not_oversell".
+  does_not_oversell:
+    name: does_not_oversell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # PRD §3 locks the runtime to Node 22 LTS.
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+      # Testcontainers uses the Docker daemon preinstalled on GitHub runners.
+      # Linux raises somaxconn well above the macOS default, so the concurrency
+      # harness opens its connections without the kernel refusing any.
+      - name: Integration tests (real PostgreSQL via Testcontainers)
+        run: pnpm test:integration
+
+      - name: The oversell proof
+        run: pnpm test:oversell
