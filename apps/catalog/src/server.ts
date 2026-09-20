@@ -87,6 +87,26 @@ export async function buildServer({ config, pool, redis = null }: BuildServerOpt
     }
   });
 
+  /**
+   * `price_paise` is BIGINT, and node-postgres returns BIGINT as a **string** so
+   * that values beyond Number.MAX_SAFE_INTEGER survive the trip. Passed straight
+   * through, a client doing arithmetic on it concatenates instead of adding:
+   * three Silver seats came out as ₹2,50,00,02,50,00,02,500 rather than ₹7,500.
+   *
+   * The service that owns the column normalises it, exactly as orders already
+   * does for `amount_paise` — otherwise every client has to rediscover this, and
+   * TypeScript cannot help because the value is unvalidated JSON on the wire.
+   *
+   * A ticket price is nowhere near the safe-integer ceiling (₹90 trillion), so
+   * Number is lossless here.
+   */
+  const asPricedTier = <T extends { price_paise: string | number }>(
+    row: T,
+  ): Omit<T, 'price_paise'> & { price_paise: number } => ({
+    ...row,
+    price_paise: Number(row.price_paise),
+  });
+
   /* --------------------------------------------------------------- venues */
 
   app.post(
@@ -202,7 +222,7 @@ export async function buildServer({ config, pool, redis = null }: BuildServerOpt
     const event = found.rows[0];
     if (event === undefined) throw new AppError(404, ErrorCode.notFound, 'Event not found');
 
-    const tiers = await pool.query(
+    const tiers = await pool.query<{ tier_id: string; name: string; price_paise: string }>(
       `SELECT tier_id, name, price_paise FROM seat_tiers WHERE event_id = $1 ORDER BY price_paise DESC`,
       [req.params.eventId],
     );
@@ -212,7 +232,7 @@ export async function buildServer({ config, pool, redis = null }: BuildServerOpt
       [req.params.eventId],
     );
 
-    return { ...event, tiers: tiers.rows, sections: sections.rows };
+    return { ...event, tiers: tiers.rows.map(asPricedTier), sections: sections.rows };
   });
 
   app.patch(
@@ -296,12 +316,14 @@ export async function buildServer({ config, pool, redis = null }: BuildServerOpt
       preHandler: requirePermission('event:update', resolveEventOwner),
     },
     async (req, reply) => {
-      const inserted = await pool.query(
+      const inserted = await pool.query<{ tier_id: string; event_id: string; name: string; price_paise: string }>(
         `INSERT INTO seat_tiers (event_id, name, price_paise) VALUES ($1, $2, $3)
          RETURNING tier_id, event_id, name, price_paise`,
         [req.params.eventId, req.body.name, req.body.pricePaise],
       );
-      return reply.status(201).send(inserted.rows[0]);
+      const tier = inserted.rows[0];
+      if (tier === undefined) throw new Error('tier insert returned no row');
+      return reply.status(201).send(asPricedTier(tier));
     },
   );
 
@@ -362,14 +384,16 @@ export async function buildServer({ config, pool, redis = null }: BuildServerOpt
       }
     }
 
-    const sections = await pool.query(
+    const sections = await pool.query<{ price_paise: string }>(
       `SELECT s.section_id, s.name, s.row_count, s.seats_per_row, s.geometry,
               t.tier_id, t.name AS tier_name, t.price_paise
        FROM seatmap_sections s JOIN seat_tiers t ON t.tier_id = s.tier_id
        WHERE s.event_id = $1 ORDER BY s.name`,
       [eventId],
     );
-    const body = { eventId, sections: sections.rows };
+    // Normalised BEFORE caching, or the cache would serve the string form for
+    // its whole TTL and the bug would look intermittent.
+    const body = { eventId, sections: sections.rows.map(asPricedTier) };
 
     if (redis !== null) {
       await withRedisFallback(

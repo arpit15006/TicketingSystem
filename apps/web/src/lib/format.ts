@@ -4,7 +4,26 @@
  * so the rupee value exists for display and nothing else — never round-trip a
  * formatted string back into a request.
  */
-export function formatPaise(paise: number): string {
+/**
+ * Coerce a paise value arriving from the wire.
+ *
+ * `price_paise` and `amount_paise` are BIGINT, which node-postgres serialises as
+ * a **string**. Catalog and orders both normalise before responding, so this is
+ * belt-and-braces — but trusting the wire is exactly how three ₹2,500 seats once
+ * rendered as ₹2,50,00,02,50,00,02,500, and a declared TypeScript type is not a
+ * runtime guarantee for unvalidated JSON.
+ */
+export function toPaise(value: number | string | null | undefined): number {
+  const parsed = typeof value === "number" ? value : Number(value ?? 0)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+export function formatPaise(paise: number | string): string {
+  const value = toPaise(paise)
+  return formatRupees(value)
+}
+
+function formatRupees(paise: number): string {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",

@@ -2,6 +2,7 @@
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query"
 import { api } from "./api"
+import { toPaise } from "./format"
 import type {
   AvailabilityResponse,
   EventDetail,
@@ -24,7 +25,12 @@ export function useEvents(status?: EventStatus): UseQueryResult<EventSummary[]> 
 export function useEvent(eventId: string): UseQueryResult<EventDetail> {
   return useQuery({
     queryKey: ["event", eventId],
-    queryFn: async () => api<EventDetail>(`/catalog/events/${eventId}`),
+    queryFn: async () => {
+      const event = await api<EventDetail>(`/catalog/events/${eventId}`)
+      // Normalised once, here, so no component downstream can add two prices
+      // together and get a concatenated string.
+      return { ...event, tiers: event.tiers.map((tier) => ({ ...tier, price_paise: toPaise(tier.price_paise) })) }
+    },
     enabled: eventId !== "",
   })
 }
