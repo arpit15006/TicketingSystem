@@ -12,7 +12,8 @@ import {
   ShieldCheckIcon,
   UsersIcon,
 } from "lucide-react"
-import { EventPoster } from "@/components/event-card"
+import { EventCard, EventPoster } from "@/components/event-card"
+import { ShareButton } from "@/components/share-button"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -31,7 +32,7 @@ import {
 } from "@/components/ui/breadcrumb"
 import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { api, ApiError } from "@/lib/api"
-import { useAvailability, useEvent } from "@/lib/queries"
+import { useAvailability, useEvent, useEvents } from "@/lib/queries"
 import { formatEventDate, formatPaise } from "@/lib/format"
 import { CATEGORY_LABEL, categoryOf } from "@/lib/poster"
 import type { Venue } from "@/lib/api-types"
@@ -40,6 +41,7 @@ export default function EventDetailPage() {
   const { id: eventId } = useParams<{ id: string }>()
   const { data: event, isLoading, error } = useEvent(eventId)
   const { data: availability } = useAvailability(eventId, { limit: 5000 })
+  const { data: allEvents } = useEvents()
   const { data: venue } = useQuery({
     queryKey: ["venue", event?.venue_id],
     queryFn: async () => api<Venue>(`/catalog/venues/${event?.venue_id}`),
@@ -75,6 +77,7 @@ export default function EventDetailPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <div className="flex items-center justify-between gap-3">
       <Breadcrumb>
         <BreadcrumbList>
           <BreadcrumbItem>
@@ -88,6 +91,8 @@ export default function EventDetailPage() {
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
+      <ShareButton title={event.title} text={`${event.title} — ${formatEventDate(event.starts_at)}`} />
+      </div>
 
       {/* ── poster band ──────────────────────────────────────────────────── */}
       <div className="relative h-64 overflow-hidden rounded-2xl md:h-80">
@@ -279,6 +284,27 @@ export default function EventDetailPage() {
           </Card>
         </div>
       </div>
+      {/* ── you might also like ─────────────────────────────────────────── */}
+      {(() => {
+        const category = categoryOf(event.title)
+        const similar = (allEvents ?? [])
+          .filter((e) => e.event_id !== event.event_id)
+          .sort((a, b) => {
+            const score = (x: typeof a) => (categoryOf(x.title) === category ? 2 : 0) + (x.venue_city === venue?.city ? 1 : 0)
+            return score(b) - score(a)
+          })
+          .slice(0, 4)
+        return similar.length === 0 ? null : (
+          <section className="flex flex-col gap-4">
+            <h2 className="text-lg font-semibold">You might also like</h2>
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+              {similar.map((e) => (
+                <EventCard key={e.event_id} event={e} />
+              ))}
+            </div>
+          </section>
+        )
+      })()}
     </div>
   )
 }

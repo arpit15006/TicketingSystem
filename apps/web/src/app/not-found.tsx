@@ -1,10 +1,14 @@
 import Link from "next/link"
 import { CompassIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { SiteHeader } from "@/components/site-header"
+import { SiteFooter } from "@/components/site-footer"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 
 export default function NotFound() {
   return (
+    <>
+    <SiteHeader />
     <main className="flex flex-1 items-center justify-center px-4 py-24">
       <Empty>
         <EmptyHeader>
@@ -21,5 +25,7 @@ export default function NotFound() {
         </Button>
       </Empty>
     </main>
+    <SiteFooter />
+    </>
   )
 }

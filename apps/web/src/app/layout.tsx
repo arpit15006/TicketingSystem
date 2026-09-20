@@ -14,8 +14,15 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "Ticketing",
-  description: "Event ticketing that never sells a seat twice.",
+  title: { default: "Ticketing", template: "%s · Ticketing" },
+  description: "Concerts, comedy, sport and theatre. Seats held while you pay, never oversold.",
+  icons: { icon: "/favicon.svg" },
+  openGraph: {
+    title: "Ticketing",
+    description: "Seats held while you pay, never oversold.",
+    type: "website",
+    siteName: "Ticketing",
+  },
 }
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

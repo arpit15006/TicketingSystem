@@ -2,12 +2,11 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { ArrowRightIcon, MapPinIcon, SparklesIcon, TicketXIcon } from "lucide-react"
+import { ArrowRightIcon, CalendarDaysIcon, FlameIcon, SparklesIcon, TicketXIcon } from "lucide-react"
 import { EventCard, EventPoster } from "@/components/event-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel"
@@ -15,6 +14,7 @@ import { ApiError } from "@/lib/api"
 import { useEvents } from "@/lib/queries"
 import { formatEventDate, formatPaise } from "@/lib/format"
 import { CATEGORY_LABEL, categoryOf, type Category } from "@/lib/poster"
+import { ALL_CITIES, useCity } from "@/lib/city"
 import type { EventSummary } from "@/lib/api-types"
 
 const CATEGORIES: Category[] = ["music", "comedy", "sports", "theatre", "festival"]
@@ -22,26 +22,39 @@ const CATEGORIES: Category[] = ["music", "comedy", "sports", "theatre", "festiva
 export default function HomePage() {
   const { data, isLoading, error } = useEvents()
   const [category, setCategory] = React.useState<Category | "all">("all")
-  const [city, setCity] = React.useState<string>("all")
-
-  const cities = React.useMemo(
-    () => [...new Set((data ?? []).map((e) => e.venue_city))].sort(),
-    [data]
-  )
+  const [city] = useCity()
 
   const events = React.useMemo(
     () =>
       (data ?? []).filter(
         (e) =>
           (category === "all" || categoryOf(e.title) === category) &&
-          (city === "all" || e.venue_city === city)
+          (city === ALL_CITIES || e.venue_city === city)
       ),
     [data, category, city]
   )
 
   const featured = React.useMemo(
-    () => (data ?? []).filter((e) => e.status === "onsale").slice(0, 5),
-    [data]
+    () => (data ?? []).filter((e) => e.status === "onsale" && (city === ALL_CITIES || e.venue_city === city)).slice(0, 5),
+    [data, city]
+  )
+
+  // Rails. "This week" is date arithmetic; "High demand" is the events that
+  // actually have a waiting room — both facts, neither a guess at popularity.
+  // `now` is captured once at mount: reading the clock during render is impure,
+  // and a listing does not need to re-bucket itself by the second.
+  const [now] = React.useState(() => Date.now())
+  const inCity = React.useCallback((e: EventSummary) => city === ALL_CITIES || e.venue_city === city, [city])
+  const thisWeek = React.useMemo(() => {
+    const week = now + 7 * 86_400_000
+    return (data ?? []).filter((e) => {
+      const starts = new Date(e.starts_at).getTime()
+      return inCity(e) && e.status === "onsale" && starts >= now && starts <= week
+    })
+  }, [data, inCity, now])
+  const highDemand = React.useMemo(
+    () => (data ?? []).filter((e) => inCity(e) && e.waiting_room_enabled && e.status === "onsale"),
+    [data, inCity]
   )
 
   return (
@@ -63,32 +76,23 @@ export default function HomePage() {
         </Carousel>
       ) : null}
 
+      {/* ── rails ────────────────────────────────────────────────────────── */}
+      {!isLoading && category === "all" && thisWeek.length > 0 && (
+        <Rail icon={<CalendarDaysIcon />} title="This week" subtitle="Starting in the next seven days" events={thisWeek} />
+      )}
+      {!isLoading && category === "all" && highDemand.length > 0 && (
+        <Rail icon={<FlameIcon />} title="High demand" subtitle="Waiting room in effect — join early" events={highDemand} />
+      )}
+
       {/* ── filters ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">What&apos;s on</h1>
-            <p className="text-sm text-muted-foreground">
-              {data?.length ?? 0} events · seats held while you pay, never oversold.
-            </p>
-          </div>
-          <ToggleGroup
-            type="single"
-            value={city}
-            onValueChange={(v) => v !== "" && setCity(v)}
-            variant="outline"
-            size="sm"
-          >
-            <ToggleGroupItem value="all">
-              <MapPinIcon className="size-3.5" />
-              All cities
-            </ToggleGroupItem>
-            {cities.map((c) => (
-              <ToggleGroupItem key={c} value={c}>
-                {c}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            What&apos;s on{city === ALL_CITIES ? "" : ` in ${city}`}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            {events.length} event{events.length === 1 ? "" : "s"} · seats held while you pay, never oversold.
+          </p>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -143,6 +147,29 @@ export default function HomePage() {
         </div>
       )}
     </div>
+  )
+}
+
+function Rail({ icon, title, subtitle, events }: { icon: React.ReactNode; title: string; subtitle: string; events: EventSummary[] }) {
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold [&_svg]:size-5">
+            {icon}
+            {title}
+          </h2>
+          <p className="text-sm text-muted-foreground">{subtitle}</p>
+        </div>
+      </div>
+      <div className="-mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-2 [scrollbar-width:thin]">
+        {events.map((e) => (
+          <div key={e.event_id} className="w-64 shrink-0 snap-start">
+            <EventCard event={e} />
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }
 
