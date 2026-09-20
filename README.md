@@ -5,7 +5,7 @@ It sells seats for events under one defining constraint: **a seat must never be 
 under a thousand simultaneous buyers, not when a service crashes, not when Redis is down, and not
 when a payment settles after the buyer's hold has already expired.
 
-> **Build status: Phases 1–4 of 8 complete and verified.** This README grows one phase at a time, and
+> **Build status: Phases 1–5 of 8 complete and verified.** This README grows one phase at a time, and
 > every number in it is copied from a real command's output. Sections belonging to unbuilt phases
 > say so rather than describing something that does not exist yet.
 > Progress: [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
@@ -79,22 +79,47 @@ resulting RSTs measure macOS, not seat allocation.)
 | Payment-after-expiry compensation | 3 | ✅ verified |
 | Raw-body webhook signature verification | 3 | ✅ verified |
 | Kafka broker killed mid-sale → zero events lost | 4 | ✅ verified |
+| **Redis killed mid-sale → zero oversells, fails open** | 5 | ✅ verified |
+| Queue ordering, admission control, SSE | 5 | ✅ verified |
 | Idempotent consumers under redelivery | 4 | ✅ verified |
 | `requestId` traced through Kafka into the consumer | 4 | ✅ verified |
 | Resource-scoped authorization | 2 | ✅ verified |
 | Authenticated booking end to end through the gateway | 2 | ✅ verified |
 | 5,000-seat seed | 2 | ✅ verified |
-| Redis failure → zero oversells | 5 | not built yet |
 | k6 load test, real p50/p95/p99 | 7 | not built yet |
 | `requestId` traced end to end | 7 | not built yet |
 
-Full suite through Phase 4: **106 tests passing**, run four consecutive times with identical
+Full suite through Phase 5: **118 tests passing**, run four consecutive times with identical
 results, Phase 1's proof unchanged throughout.
 
 ```
- Test Files  18 passed (18)
-      Tests  106 passed (106)
+ Test Files  20 passed (20)
+      Tests  118 passed (118)
 ```
+
+### 1.2b Redis dies mid-sale and nothing oversells
+
+The claim in ADR-012 is that Redis holds no correctness state. This is what earns it — a real Redis
+container killed before the burst, against a **waiting-room-enabled event**, so Redis is genuinely
+on the request path:
+
+```
+redis          : KILLED before this burst
+requests fired : 500 (real parallel HTTP, through the gateway)
+seats available: 50
+status counts  : {"201":50,"409":450}
+oversell_total : 0  ✅  (Redis was down for all of it)
+```
+
+With Redis gone: the waiting room **fails open** and admits everyone, the seatmap falls back to
+Postgres (`x-cache: miss`, still `200`), authentication keeps working, rate limiting degrades
+instead of failing, and **seat allocation is untouched**. When Redis returns, the queue and cache
+resume on their own.
+
+Fail-open is not a slogan here; it is two specific decisions. `enableOfflineQueue: false` makes
+commands reject immediately instead of queueing for the length of the outage, and every Redis call
+goes through a helper that states what unavailability means for that caller. Without the first,
+every "fail-open" path would instead hang.
 
 ### 1.3 A stolen refresh token is usable at most once
 
@@ -240,7 +265,7 @@ graph TD
   gw --> cat[catalog :3002<br/><b>phase 2 ✅</b>]
   gw --> res[reservation :3003<br/><b>phase 1 ✅</b>]
   gw --> ord[orders :3004<br/><b>phase 3 ✅</b>]
-  gw --> wr[waitingroom :3005<br/><i>phase 5</i>]
+  gw --> wr[waitingroom :3005<br/><b>phase 5 ✅</b>]
   res --> resdb[(reservation_db<br/>seats · holds · outbox)]
   ord --> orddb[(orders_db)]
   id --> iddb[(identity_db)]
@@ -248,11 +273,11 @@ graph TD
   res -.outbox relay.-> kafka{{Redpanda<br/><b>phase 4 ✅</b>}}
   ord -.outbox relay.-> kafka
   kafka -.-> notif[notification :3006<br/><b>phase 4 ✅</b>]
-  wr -.queue only.-> redis[(Redis<br/><i>phase 5</i>)]
+  wr -.queue only.-> redis[(Redis<br/><b>phase 5 ✅</b>)]
   classDef done fill:#0b6,stroke:#084,color:#fff
   classDef todo fill:#eee,stroke:#999,color:#555
-  class res,gw,id,cat,ord,notif,kafka,resdb,iddb,catdb,orddb done
-  class web,wr,redis todo
+  class res,gw,id,cat,ord,notif,wr,kafka,redis,resdb,iddb,catdb,orddb done
+  class web todo
 ```
 
 `catalog` and `reservation` are separate because seatmap reads outnumber seat writes by roughly
@@ -339,7 +364,29 @@ consumers exist to make.
 
 ---
 
-## 7. Authentication and authorization
+## 7. The waiting room
+
+Applies only to events with `waiting_room_enabled`. A Redis sorted set scored by join time is the
+queue; an admitter releases N users per second from the head with `ZPOPMIN`; admission is a
+short-lived JWT naming the event and the user.
+
+Position updates go over **SSE**, not WebSockets: the traffic is strictly one-directional, so SSE
+passes through the existing gateway, auth and load balancer with no special handling and reconnects
+on its own with `Last-Event-ID`. WebSockets would mean sticky sessions and a second auth path for a
+feature that needs neither (ADR-016).
+
+Admission is enforced by **reservation**, not only by the gateway. The gateway cannot see which
+event a booking is for without parsing the request body, and a check that can be dodged by reaching
+the service directly is not a check. The gateway rejects malformed or expired tokens early; the
+service that owns the seat makes the decision that counts.
+
+Every failure mode fails **open** — catalog unreachable, Redis down, waiting room broken. The
+waiting room shapes traffic; it does not protect a seat. The worst outcome of failing open is a
+thundering herd, which the conditional `UPDATE` already handles correctly.
+
+---
+
+## 8. Authentication and authorization
 
 Access tokens are **RS256, 10 minutes**. Refresh tokens are opaque 32-byte values, stored only as
 a SHA-256 digest, valid 14 days, and **rotated on every use** with family-wide reuse detection.
@@ -368,7 +415,7 @@ Permissions are **resource-scoped**, never flat globals — holding `organizer` 
 
 ---
 
-## 8. Quickstart
+## 9. Quickstart
 
 Requires Node 22+, pnpm, and a Docker daemon for the integration tests.
 
@@ -391,7 +438,7 @@ databases would be the first crack in database-per-service. It is safe to re-run
 
 ---
 
-## 9. Documentation
+## 10. Documentation
 
 | Document | Contents |
 |---|---|
@@ -403,7 +450,7 @@ databases would be the first crack in database-per-service. It is safe to re-run
 
 ---
 
-## 10. Invariants
+## 11. Invariants
 
 | ID | Invariant | Enforced by | Status |
 |---|---|---|---|
@@ -413,17 +460,18 @@ databases would be the first crack in database-per-service. It is safe to re-run
 | INV-4 | A seat is never `sold` without captured payment | Compensation path | ✅ proven |
 | INV-5 | An expired hold never blocks another buyer | `held_until < now()` predicate, no reaper | ✅ proven |
 | INV-6 | Idempotent replay causes no extra side effects | `idempotency_keys` + body hash, `processed_webhooks` | ✅ proven |
-| INV-7 | Correctness never depends on Redis, Kafka or a job | Postgres-only correctness path | ✅ proven for Kafka; Redis in phase 5 |
+| INV-7 | Correctness never depends on Redis, Kafka or a job | Postgres-only correctness path | ✅ **proven** — killed Redis and Kafka, zero oversells |
 | INV-8 | No overlapping *sold* occupancies (segmented mode) | GiST `EXCLUDE` constraint | phase 8 |
 
 ---
 
-## 11. Known limitations
+## 12. Known limitations
 
 Carried from [`DECISIONS.md`](DECISIONS.md) and tracked honestly as the build proceeds.
 
-- Phases 5–8 are not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
-- The `jti` denylist and rate limiting are in-process until Redis arrives in Phase 5, so both are per-replica rather than shared.
+- Phases 6–8 are not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
+- Waiting-room fairness is approximate: position is by join timestamp in a sorted set, and a Redis failover could disturb ordering. It fails open and holds no correctness state, so the worst case is an unfair queue, never an oversell.
+- Admission tokens are HS256 with a shared secret — deliberate, since the token grants a queue place and no authority over a seat, an order or money.
 - Seat writes are single-node. Sharding by `event_id` is the natural next step and is unimplemented.
 - The outbox relay polls every 500 ms, so publish latency is bounded by that; CDC (Debezium) is the lower-latency successor.
 - Published outbox rows are never pruned — a retention job is future work.

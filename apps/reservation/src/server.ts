@@ -33,6 +33,7 @@ import {
   AVAILABLE_SEATS_SQL,
 } from './allocation.js';
 import { incr, auditInvariants, renderPrometheus, enterAllocation, exitAllocation } from './metrics.js';
+import { createAdmissionGuard } from './admission.js';
 
 const UUID = Type.String({ format: 'uuid' });
 
@@ -97,6 +98,12 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
   // call finalize directly could take a seat without ever paying for it.
   const internalOnly = requireServiceToken(config.internalServiceToken);
 
+  // PRD §12 — waiting-room admission, enforced by the service that owns the seat.
+  const enforceAdmission = createAdmissionGuard({
+    catalogUrl: config.catalogUrl,
+    admissionTokenSecret: config.admissionTokenSecret,
+  });
+
   app.get('/healthz', async () => ({ status: 'ok', service: 'reservation' }));
 
   app.get('/readyz', async (_req, reply) => {
@@ -141,6 +148,12 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
     const rawKey = req.headers[IDEMPOTENCY_KEY_HEADER];
     const idempotencyKey = (Array.isArray(rawKey) ? rawKey[0] : rawKey)?.trim() || null;
     const requestHash = hashRequest('POST', '/reservations', body);
+
+    // PRD §12 — checked before any seat work. Fails open on every infrastructure
+    // failure: the waiting room shapes traffic, it does not protect a seat.
+    if (config.waitingRoomEnforcementEnabled) {
+      await enforceAdmission(req, { eventId: body.eventId, userId });
+    }
 
     enterAllocation();
     try {

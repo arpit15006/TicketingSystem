@@ -17,6 +17,7 @@ export {
   type ResourceContext,
   type ResourceResolver,
 } from './permissions.js';
+export { createRedisClient, withRedisFallback, type Redis, type RedisClientOptions } from './redis.js';
 export {
   createPool,
   withTransaction,

@@ -19,7 +19,8 @@
     "node-pg-migrate": "^8.0.3",
     "pg": "^8.16.3",
     "pino": "^9.13.1",
-    "@ticketing/kafka": "workspace:*"
+    "@ticketing/kafka": "workspace:*",
+    "jose": "^6.1.0"
   },
   "devDependencies": {
     "@types/pg": "^8.15.6",

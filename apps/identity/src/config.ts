@@ -28,6 +28,8 @@ export interface Config {
    * cross-service database access ADR-004 forbids.
    */
   bootstrapAdminEmail: string | undefined;
+  /** Empty disables the shared denylist and falls back to the in-process one. */
+  redisUrl: string;
   logLevel: string;
   nodeEnv: string;
 }
@@ -49,6 +51,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     publicKeyPem: process.env['JWT_PUBLIC_KEY'],
     keyId: process.env['JWT_KEY_ID'],
     bootstrapAdminEmail: process.env['BOOTSTRAP_ADMIN_EMAIL'],
+    redisUrl: process.env['REDIS_URL'] ?? '',
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',
     ...overrides,

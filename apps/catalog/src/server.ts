@@ -4,6 +4,7 @@ import type { Logger } from 'pino';
 import { Type } from '@sinclair/typebox';
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import type { Pool } from 'pg';
+import type { Redis } from '@ticketing/http';
 import { createLogger } from '@ticketing/logger';
 import {
   requestIdPlugin,
@@ -12,6 +13,7 @@ import {
   requirePermission,
   requireAuth,
   AppError,
+  withRedisFallback,
   type ResourceContext,
 } from '@ticketing/http';
 import { ErrorCode } from '@ticketing/contracts';
@@ -30,9 +32,11 @@ const UUID = Type.String({ format: 'uuid' });
 export interface BuildServerOptions {
   config: Config;
   pool: Pool;
+  /** Optional: seatmap read cache. Absent or broken simply means slower reads. */
+  redis?: Redis | null;
 }
 
-export async function buildServer({ config, pool }: BuildServerOptions): Promise<CatalogServer> {
+export async function buildServer({ config, pool, redis = null }: BuildServerOptions): Promise<CatalogServer> {
   const app = Fastify({
     loggerInstance: createLogger({ service: 'catalog', level: config.logLevel, pretty: config.nodeEnv === 'development' }),
     genReqId: (req) => {
@@ -338,16 +342,45 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
    * The seatmap geometry only. Availability is deliberately NOT here: catalog never
    * reads or reports seat state (PRD §4, ADR-006). A client asks reservation for
    * that, because a seatmap may be seconds stale and an allocation may not.
+   *
+   * Cached in Redis for a few seconds because this is the highest-volume read in
+   * the system — and cached ONLY because nothing here affects who gets a seat.
+   *
+   * ADR-012 — every Redis interaction below is wrapped so that a cache failure
+   * degrades latency and nothing else. If Redis is gone, this endpoint falls back
+   * to Postgres and keeps serving. A seatmap that is slower is not an outage; a
+   * seatmap that 500s is.
    */
-  app.get('/events/:eventId/seatmap', { schema: { params: Type.Object({ eventId: UUID }) } }, async (req) => {
+  app.get('/events/:eventId/seatmap', { schema: { params: Type.Object({ eventId: UUID }) } }, async (req, reply) => {
+    const { eventId } = req.params;
+    const cacheKey = `catalog:seatmap:${eventId}`;
+
+    if (redis !== null) {
+      const cached = await withRedisFallback(async () => redis.get(cacheKey), null);
+      if (cached !== null) {
+        return reply.header('x-cache', 'hit').send(JSON.parse(cached) as unknown);
+      }
+    }
+
     const sections = await pool.query(
       `SELECT s.section_id, s.name, s.row_count, s.seats_per_row, s.geometry,
               t.tier_id, t.name AS tier_name, t.price_paise
        FROM seatmap_sections s JOIN seat_tiers t ON t.tier_id = s.tier_id
        WHERE s.event_id = $1 ORDER BY s.name`,
-      [req.params.eventId],
+      [eventId],
     );
-    return { eventId: req.params.eventId, sections: sections.rows };
+    const body = { eventId, sections: sections.rows };
+
+    if (redis !== null) {
+      await withRedisFallback(
+        async () => redis.set(cacheKey, JSON.stringify(body), 'EX', config.seatmapCacheTtlSeconds),
+        null,
+      );
+    }
+
+    // `x-cache: miss` when Redis served nothing — including when it is down, which
+    // is exactly what the chaos test asserts.
+    return reply.header('x-cache', 'miss').send(body);
   });
 
   return app;

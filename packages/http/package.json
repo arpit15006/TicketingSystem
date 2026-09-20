@@ -18,7 +18,8 @@
     "@ticketing/contracts": "workspace:*",
     "@ticketing/logger": "workspace:*",
     "fastify-plugin": "^5.1.0",
-    "jose": "^6.1.0"
+    "jose": "^6.1.0",
+    "ioredis": "^5.9.0"
   },
   "peerDependencies": {
     "fastify": "^5.0.0",

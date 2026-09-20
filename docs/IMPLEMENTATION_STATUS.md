@@ -13,8 +13,8 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 | Phase 2 | Identity + Catalog + Gateway | ✅ VERIFIED |
 | Phase 3 | Orders + Razorpay | ✅ VERIFIED |
 | Phase 4 | Kafka + outbox + notification | ✅ VERIFIED |
-| Phase 5 | Waiting room | 🔄 NEXT — Phase 4 gate passed |
-| Phase 6 | Frontend | ⛔ HOLD — user asked to be consulted before this phase begins |
+| Phase 5 | Waiting room | ✅ VERIFIED |
+| Phase 6 | Frontend | ⛔ HOLD — **user asked to be consulted before this phase begins** |
 | Phase 7 | Proof + chaos + load | ⏳ BLOCKED — awaits Phase 6 |
 | Phase 8 | Segmented allocation | ⏳ BLOCKED — strictly additive, awaits Phase 7 |
 
@@ -28,7 +28,7 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 | INV-4 | No sold seat without captured payment | `expiry-boundary.spec.ts` | ✅ PROVEN — compensation releases or refunds and never leaves a sold unpaid seat |
 | INV-5 | Expired hold never blocks a buyer | `expiry.spec.ts` | ✅ PROVEN — janitor disabled throughout |
 | INV-6 | Idempotent replay has no extra effects | `idempotency.spec.ts`, `webhook-replay.spec.ts` | ✅ PROVEN — 50 replays (sequential AND concurrent) → 1 ticket, 1 capture |
-| INV-7 | Correctness independent of Redis/Kafka/jobs | `chaos-redis.spec.ts` + `chaos-kafka.spec.ts` | 🟡 PARTIAL — **Kafka-kill proven**: seats still allocate with the broker dead. Redis chaos is Phase 5 |
+| INV-7 | Correctness independent of Redis/Kafka/jobs | `chaos-redis.spec.ts` + `chaos-kafka.spec.ts` | ✅ **PROVEN** — 500 requests / 50 seats with Redis dead → 50/450, `oversell_total 0`; and seats allocate with Kafka dead. Janitor disabled in every test. |
 | INV-8 | No overlapping sold occupancy (segmented) | `segment-exclusion.spec.ts` | ⏳ not yet proven in-project — constraint mechanism demonstrated in the Phase 0 spike |
 
 ---
@@ -528,3 +528,112 @@ determinism: 4 consecutive full runs, 106/106, zero unhandled errors
 **Decision**
 
 **PHASE 4 VERIFIED — PROCEED TO PHASE 5**
+
+
+---
+
+## PHASE 5 VERIFICATION REPORT
+
+**Implementation**
+- [x] `waitingroom` service (:3005), Redis only — no database
+- [x] `POST /queue/:eventId/join` — Redis `ZSET` scored by join time, **`ZADD NX`** so a refresh never costs your place
+- [x] `GET /queue/:eventId/status` — polling equivalent of the stream
+- [x] `GET /queue/:eventId/position` — **SSE**, pushing `{position, total, estimatedWaitSeconds}` every 2s, switching to an `admitted` event that carries the token; carries `id:` so `Last-Event-ID` resumption works (ADR-016)
+- [x] Admitter loop releasing **N users/second** (default 50) via `ZPOPMIN`, batch scaled to the tick so changing the interval cannot silently change the rate
+- [x] Admission JWT with claims `{ eventId, admittedAt, exp: +10min }`
+- [x] **Enforcement in reservation** (the service that owns the seat) plus edge validation in the gateway
+- [x] Redis-backed **`jti` denylist** (ADR-011) replacing the Phase 2 in-process one — DEV-6 closed
+- [x] Redis-backed **rate limiting**, shared across gateway replicas
+- [x] Redis **seatmap cache** in catalog with Postgres fallback
+- [x] `createRedisClient` with `enableOfflineQueue: false` and `withRedisFallback` — the two things that make fail-open real rather than aspirational
+
+**Tests — 118 passing across 20 files (was 106 across 18)**
+- [x] `waiting-room.spec.ts` (9) — arrival ordering, stable position across rejoins, head-of-queue admission, wait estimate, booking blocked without a token, admitted user through end to end, token not valid for another event **or another user**, forged token rejected at the edge, non-waiting-room events unaffected, **SSE position → admitted transition**
+- [x] `chaos-redis.spec.ts` (3) — **the Phase 5 acceptance gate**
+- [x] Phases 1–4 suites (106) — unchanged and passing
+
+**Acceptance criteria (PRD §16 Phase 5)**
+
+> "Acceptance: fail-open chaos test passes."
+
+With **Redis killed** for the entire burst, against a **waiting-room-enabled event** so Redis is
+genuinely on the request path:
+
+```
+redis          : KILLED before this burst
+requests fired : 500 (real parallel HTTP, through the gateway)
+seats available: 50
+status counts  : {"201":50,"409":450}
+oversell_total : 0  ✅  (Redis was down for all of it)
+```
+
+- [x] **Zero oversells** — 50 held, no seat under two holds
+- [x] Waiting room **fails open** — `degraded: true`, everyone admitted with a real token
+- [x] **Seatmap falls back to Postgres** (`x-cache: miss`, still 200)
+- [x] Authentication keeps working (denylist fails open, per ADR-011's stated cost)
+- [x] Rate limiting degrades instead of 500ing
+- [x] Redis revived → queue and cache resume with no restart and no intervention
+
+**Regression**
+- [x] Full suite run **four times**: 118/118 each, `{"201":100,"409":900}` and `{"201":50,"409":450}` every time, zero unhandled errors
+
+**Guardrails audited (PRD §19)**
+- [x] **Redis is never consulted to decide whether a seat is available** — proven by killing it
+- [x] No Redis locks, no Redlock
+- [x] No ORM · no background job on the correctness path
+- [x] Gateway still makes no authorization decision; admission enforcement is authoritative in the service that owns the seat
+- [x] No invented numbers
+
+**Commands executed**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm build
+pnpm vitest run --project integration waiting-room
+pnpm vitest run --project integration chaos-redis
+pnpm test   # x4
+```
+
+**Results**
+
+```
+typecheck : clean      lint : clean      build : 12/12 workspace projects
+
+ Test Files  20 passed (20)
+      Tests  118 passed (118)
+   Duration  42.72s
+
+determinism: 4 consecutive full runs, 118/118, zero unhandled errors
+```
+
+**Defects found and fixed during this phase**
+
+1. **The rate limiter was fail-CLOSED.** `@fastify/rate-limit` defaults `skipOnError` to `false`, so
+   any Redis error became a **500 on every request at the edge** — the exact opposite of what
+   ADR-012 promises, and worse than having no rate limiter at all. With `enableOfflineQueue: false`
+   that included the window while the connection was still being established, which is how the test
+   caught it (a `register` call 500ing during the first concurrent burst). Now `skipOnError: true`:
+   an unthrottled request reaches an allocator that is correct under any load; a 500 reaches a
+   customer who cannot buy a ticket.
+2. **Two tests assumed reconnection was instantaneous.** An ioredis client reconnects on its own
+   backoff schedule and can still be backing off after the server accepts connections again. That is
+   normal client behaviour, so the tests now poll for recovery rather than asserting a timing
+   property of ioredis.
+
+**Deviations closed**
+- **DEV-6 closed** — the `jti` denylist is now Redis-backed and shared across replicas, as PRD §9.1
+  specifies.
+
+**Known issues / limitations**
+- Waiting-room fairness is approximate: position is by join timestamp in a sorted set, and a Redis
+  failover could disturb ordering. Since it fails open and holds no correctness state, the worst
+  case is an unfair queue, never an oversell (`DECISIONS.md` limitation #6).
+- Admission tokens are HS256 with a shared secret. Deliberate: the token grants a queue place and no
+  authority over a seat, an order or money. Asymmetric keys would buy multi-verifier and revocation
+  properties nothing in this flow needs.
+- Revocation staleness of up to 10 minutes when Redis is down, per ADR-011's stated cost.
+
+**Decision**
+
+**PHASE 5 VERIFIED**
+
+Phase 6 (frontend) is **on hold at the user's request** — it will not begin without checking in first.

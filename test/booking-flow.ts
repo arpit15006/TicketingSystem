@@ -30,7 +30,11 @@ export interface SeededEvent {
 }
 
 /** An on-sale event with priced seats, created the way a real organizer would. */
-export async function seedOnSaleEvent(stack: Stack, seatCount = 20): Promise<SeededEvent> {
+export async function seedOnSaleEvent(
+  stack: Stack,
+  seatCount = 20,
+  options: { waitingRoomEnabled?: boolean } = {},
+): Promise<SeededEvent> {
   const admin = await register(stack);
   await stack.pools.identity.query(
     `INSERT INTO role_assignments (user_id, role) VALUES ($1, 'platform_admin') ON CONFLICT DO NOTHING`,
@@ -52,6 +56,7 @@ export async function seedOnSaleEvent(stack: Stack, seatCount = 20): Promise<See
       venueId: venue.body.venue_id,
       title: `Flow Event ${randomUUID().slice(0, 8)}`,
       startsAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      waitingRoomEnabled: options.waitingRoomEnabled ?? false,
     },
   });
   const eventId = event.body.event_id as string;

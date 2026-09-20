@@ -17,6 +17,8 @@ export interface Config {
   jwksUri: string;
   jwtIssuer: string;
   jwtAudience: string;
+  redisUrl: string;
+  admissionTokenSecret: string;
   rateLimitMax: number;
   rateLimitWindowMs: number;
   logLevel: string;
@@ -35,6 +37,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     jwksUri: process.env['JWKS_URI'] ?? 'http://localhost:3001/.well-known/jwks.json',
     jwtIssuer: process.env['JWT_ISSUER'] ?? 'http://localhost:3001',
     jwtAudience: process.env['JWT_AUDIENCE'] ?? 'ticketing',
+    redisUrl: process.env['REDIS_URL'] ?? '',
+    admissionTokenSecret: process.env['ADMISSION_TOKEN_SECRET'] ?? 'dev-admission-secret-change-me',
     rateLimitMax: int('RATE_LIMIT_MAX', 300),
     rateLimitWindowMs: int('RATE_LIMIT_WINDOW_MS', 60_000),
     logLevel: process.env['LOG_LEVEL'] ?? 'info',

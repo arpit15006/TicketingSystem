@@ -23,6 +23,10 @@ export interface Config {
   jwtAudience: string;
   /** Shared secret proving a caller is another service, not an end user. */
   internalServiceToken: string;
+  catalogUrl: string;
+  admissionTokenSecret: string;
+  /** PRD §12 — enforcement is per event; this is the global off switch. */
+  waitingRoomEnforcementEnabled: boolean;
   kafkaBrokers: string[];
   /** ADR-005 — the relay is a background worker; nothing on the correctness path. */
   outboxRelayEnabled: boolean;
@@ -53,6 +57,9 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     jwtIssuer: process.env['JWT_ISSUER'] ?? 'http://localhost:3001',
     jwtAudience: process.env['JWT_AUDIENCE'] ?? 'ticketing',
     internalServiceToken: process.env['INTERNAL_SERVICE_TOKEN'] ?? 'dev-internal-service-token-change-me',
+    catalogUrl: process.env['CATALOG_URL'] ?? 'http://localhost:3002',
+    admissionTokenSecret: process.env['ADMISSION_TOKEN_SECRET'] ?? 'dev-admission-secret-change-me',
+    waitingRoomEnforcementEnabled: (process.env['WAITING_ROOM_ENFORCEMENT_ENABLED'] ?? 'true') === 'true',
     kafkaBrokers: (process.env['KAFKA_BROKERS'] ?? 'localhost:9092').split(',').map((broker) => broker.trim()),
     outboxRelayEnabled: (process.env['OUTBOX_RELAY_ENABLED'] ?? 'true') === 'true',
     outboxRelayIntervalMs: int('OUTBOX_RELAY_INTERVAL_MS', 500),

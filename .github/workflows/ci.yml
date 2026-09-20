@@ -51,3 +51,6 @@ jobs:
 
       - name: The broker-failure proof (Kafka killed mid-sale)
         run: pnpm vitest run --project integration chaos-kafka
+
+      - name: The Redis fail-open proof (Redis killed mid-sale)
+        run: pnpm vitest run --project integration chaos-redis

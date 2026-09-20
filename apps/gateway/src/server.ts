@@ -4,6 +4,7 @@ import type { Logger } from 'pino';
 import proxy from '@fastify/http-proxy';
 import rateLimit from '@fastify/rate-limit';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRedisClient } from '@ticketing/http';
 import { createLogger } from '@ticketing/logger';
 import { requestIdPlugin, errorHandlerPlugin, AppError, REQUEST_ID_HEADER } from '@ticketing/http';
 import { ErrorCode } from '@ticketing/contracts';
@@ -31,13 +32,38 @@ export async function buildServer({ config }: BuildServerOptions): Promise<Gatew
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
 
+  /*
+   * ADR-012 — rate limiting is edge behaviour and holds no correctness state.
+   *
+   * Redis makes the limit shared across gateway replicas instead of per-instance;
+   * without it, N replicas quietly allow N times the configured rate. When Redis
+   * is unavailable the plugin falls back to its in-process store, which is a
+   * looser limit rather than a closed door — the correct trade for a component
+   * that protects nothing (INV-7).
+   */
+  const rateLimitRedis = config.redisUrl === '' ? null : createRedisClient({ url: config.redisUrl });
+
   await app.register(rateLimit, {
     max: config.rateLimitMax,
     timeWindow: config.rateLimitWindowMs,
-    // Rate limiting is edge behaviour and holds no correctness state (ADR-012),
-    // so an in-process store is acceptable; Phase 5 moves it to Redis so the
-    // limit is shared across gateway replicas rather than per-instance.
+    ...(rateLimitRedis === null ? {} : { redis: rateLimitRedis }),
     keyGenerator: (req) => req.ip,
+    /*
+     * FAIL OPEN when the store errors.
+     *
+     * This defaults to FALSE, which turns any Redis hiccup into a 500 on every
+     * request at the edge — the exact opposite of ADR-012's promise, and worse
+     * than having no rate limiter at all. With `enableOfflineQueue: false` that
+     * includes the window while the connection is still being established.
+     *
+     * An unthrottled request reaches a seat allocator that is correct under any
+     * load (INV-7); a 500 reaches a customer who cannot buy a ticket.
+     */
+    skipOnError: true,
+  });
+
+  app.addHook('onClose', async () => {
+    rateLimitRedis?.disconnect();
   });
 
   const jwks = createRemoteJWKSet(new URL(config.jwksUri), { cacheMaxAge: 600_000, cooldownDuration: 30_000 });
@@ -69,6 +95,30 @@ export async function buildServer({ config }: BuildServerOptions): Promise<Gatew
     } catch (error) {
       req.log.info({ err: error }, 'rejected token at the edge');
       throw new AppError(401, ErrorCode.unauthorized, 'Access token is invalid or expired');
+    }
+  });
+
+  /*
+   * PRD §12 — waiting-room enforcement at the edge.
+   *
+   * The gateway rejects an admission token that is malformed, expired or forged.
+   * It does NOT decide whether one was required: that depends on the event, which
+   * is in the request body, and a check the client can dodge by reaching the
+   * service directly is not a check. Reservation makes the authoritative decision
+   * (ADR-010); this is the cheap early filter in front of it.
+   */
+  const admissionSecret = new TextEncoder().encode(config.admissionTokenSecret);
+
+  app.addHook('onRequest', async (req) => {
+    const raw = req.headers['x-admission-token'];
+    const token = (Array.isArray(raw) ? raw[0] : raw)?.trim();
+    if (token === undefined || token === '') return;
+
+    try {
+      await jwtVerify(token, admissionSecret, { issuer: 'waitingroom', audience: 'ticketing' });
+    } catch {
+      req.log.info('rejected an invalid admission token at the edge');
+      throw new AppError(403, ErrorCode.forbidden, 'Admission token is invalid or expired');
     }
   });
 

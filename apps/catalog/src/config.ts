@@ -14,6 +14,9 @@ export interface Config {
   jwksUri: string;
   jwtIssuer: string;
   jwtAudience: string;
+  /** Empty disables seatmap caching entirely; reads then always hit Postgres. */
+  redisUrl: string;
+  seatmapCacheTtlSeconds: number;
   logLevel: string;
   nodeEnv: string;
 }
@@ -30,6 +33,9 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     jwksUri: process.env['JWKS_URI'] ?? 'http://localhost:3001/.well-known/jwks.json',
     jwtIssuer: process.env['JWT_ISSUER'] ?? 'http://localhost:3001',
     jwtAudience: process.env['JWT_AUDIENCE'] ?? 'ticketing',
+    redisUrl: process.env['REDIS_URL'] ?? '',
+    // ADR-006 — a seatmap may be seconds stale; an allocation may not be stale at all.
+    seatmapCacheTtlSeconds: int('SEATMAP_CACHE_TTL_SECONDS', 5),
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',
     ...overrides,

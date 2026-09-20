@@ -21,7 +21,11 @@ import { loadConfig as loadOrdersConfig } from '../apps/orders/src/config.js';
 import { buildServer as buildOrders } from '../apps/orders/src/server.js';
 import { createRazorpayClient } from '../apps/orders/src/razorpay.js';
 import { createReservationClient, createCatalogClient } from '../apps/orders/src/clients.js';
-import { startFakeRazorpay, type FakeRazorpay } from '@ticketing/testkit';
+import { startFakeRazorpay, startRedis, type FakeRazorpay, type TestRedis } from '@ticketing/testkit';
+import { createRedisClient } from '@ticketing/http';
+
+import { loadConfig as loadWaitingRoomConfig } from '../apps/waitingroom/src/config.js';
+import { buildServer as buildWaitingRoom } from '../apps/waitingroom/src/server.js';
 
 import { loadConfig as loadGatewayConfig } from '../apps/gateway/src/config.js';
 import { buildServer as buildGateway } from '../apps/gateway/src/server.js';
@@ -33,6 +37,7 @@ const ORDERS_MIGRATIONS = fileURLToPath(new URL('../apps/orders/migrations', imp
 
 /** Shared secret for internal service-to-service calls within the test stack. */
 export const TEST_SERVICE_TOKEN = 'test-internal-service-token';
+export const TEST_ADMISSION_SECRET = 'test-admission-secret';
 
 export interface Stack {
   gatewayUrl: string;
@@ -44,8 +49,13 @@ export interface Stack {
   /** The Razorpay stand-in: authorize payments, sign callbacks, build webhooks. */
   razorpay: FakeRazorpay;
   serviceToken: string;
+  /** Real Redis, with chaos controls for the fail-open proof. */
+  redis: TestRedis;
+  admissionSecret: string;
+  /** Run one admitter pass immediately instead of waiting for its timer. */
+  admitNow: (eventId: string, count?: number) => Promise<string[]>;
   /** Direct URLs, used to prove a service defends itself when the edge is bypassed. */
-  direct: { identity: string; catalog: string; reservation: string; orders: string };
+  direct: { identity: string; catalog: string; reservation: string; orders: string; waitingroom: string };
   request: (
     method: string,
     path: string,
@@ -91,6 +101,8 @@ export async function startStack(): Promise<Stack> {
   dbs.push(identityDb, catalogDb, reservationDb, ordersDb);
 
   const razorpay = await startFakeRazorpay();
+  const redis = await startRedis();
+  const redisClient = createRedisClient({ url: redis.url });
 
   // ── identity ──────────────────────────────────────────────────────────────
   const bootstrapAdminEmail = `bootstrap.${randomUUID()}@demo.test`;
@@ -121,8 +133,17 @@ export async function startStack(): Promise<Stack> {
   // ── catalog ───────────────────────────────────────────────────────────────
   const catalogPool = createPool({ databaseUrl: catalogDb.url, max: 10 });
   const catalogApp = await buildCatalog({
-    config: loadCatalogConfig({ databaseUrl: catalogDb.url, nodeEnv: 'test', logLevel: 'silent', ...jwt }),
+    config: loadCatalogConfig({
+      databaseUrl: catalogDb.url,
+      nodeEnv: 'test',
+      logLevel: 'silent',
+      redisUrl: redis.url,
+      // Short enough that tests observe fresh data, long enough to prove caching.
+      seatmapCacheTtlSeconds: 2,
+      ...jwt,
+    }),
     pool: catalogPool,
+    redis: redisClient,
   });
   const catalogUrl = await listen(catalogApp);
   apps.push(catalogApp);
@@ -137,6 +158,8 @@ export async function startStack(): Promise<Stack> {
       logLevel: 'silent',
       janitorEnabled: false,
       internalServiceToken: TEST_SERVICE_TOKEN,
+      catalogUrl,
+      admissionTokenSecret: TEST_ADMISSION_SECRET,
       ...jwt,
     }),
     pool: reservationPool,
@@ -176,6 +199,25 @@ export async function startStack(): Promise<Stack> {
   apps.push(ordersApp);
   pools.push(ordersPool);
 
+  // ── waiting room ──────────────────────────────────────────────────────────
+  const waitingRoomConfig = loadWaitingRoomConfig({
+    nodeEnv: 'test',
+    logLevel: 'silent',
+    redisUrl: redis.url,
+    admissionTokenSecret: TEST_ADMISSION_SECRET,
+    // Small and explicit so queue-ordering assertions are exact rather than racy.
+    admissionRatePerSecond: 2,
+    ssePositionIntervalMs: 150,
+    ...jwt,
+  });
+  const waitingRoomApp = await buildWaitingRoom({ config: waitingRoomConfig, redis: redisClient });
+  const waitingRoomUrl = await listen(waitingRoomApp);
+  apps.push(waitingRoomApp);
+
+  // The admitter is driven explicitly by tests rather than by its timer, so
+  // "who got admitted" is deterministic instead of a race against wall-clock.
+  const { admitBatch } = await import('../apps/waitingroom/src/queue.js');
+
   // ── gateway ───────────────────────────────────────────────────────────────
   const gatewayApp = await buildGateway({
     config: loadGatewayConfig({
@@ -185,6 +227,9 @@ export async function startStack(): Promise<Stack> {
       catalogUrl,
       reservationUrl,
       ordersUrl,
+      waitingRoomUrl,
+      redisUrl: redis.url,
+      admissionTokenSecret: TEST_ADMISSION_SECRET,
       ...jwt,
       // High enough that the functional tests never trip it; a dedicated test
       // builds its own gateway with a low limit instead.
@@ -218,13 +263,25 @@ export async function startStack(): Promise<Stack> {
     pools: { identity: identityPool, catalog: catalogPool, reservation: reservationPool, orders: ordersPool },
     razorpay,
     serviceToken: TEST_SERVICE_TOKEN,
-    direct: { identity: identityUrl, catalog: catalogUrl, reservation: reservationUrl, orders: ordersUrl },
+    redis,
+    admissionSecret: TEST_ADMISSION_SECRET,
+    admitNow: async (eventId, count = 1) =>
+      admitBatch(redisClient, { eventId, count, ttlSeconds: waitingRoomConfig.admissionTtlSeconds }),
+    direct: {
+      identity: identityUrl,
+      catalog: catalogUrl,
+      reservation: reservationUrl,
+      orders: ordersUrl,
+      waitingroom: waitingRoomUrl,
+    },
     request,
     stop: async () => {
       for (const app of apps.reverse()) await app.close();
       for (const pool of pools) await pool.end();
       for (const db of dbs) await db.drop();
       await razorpay.stop();
+      redisClient.disconnect();
+      await redis.stop();
     },
   };
 }
