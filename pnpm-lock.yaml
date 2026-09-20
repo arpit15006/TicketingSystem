@@ -26,6 +26,9 @@ importers:
       eslint:
         specifier: ^9.39.1
         version: 9.39.5
+      jose:
+        specifier: ^6.1.0
+        version: 6.2.12
       kafkajs:
         specifier: ^2.2.4
         version: 2.2.4

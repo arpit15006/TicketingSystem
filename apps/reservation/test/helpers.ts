@@ -31,7 +31,9 @@ export interface Harness {
  * Nothing here is injected, faked or stubbed: the tests talk to the service exactly
  * the way a client does, which is the only way the concurrency proof means anything.
  */
-export async function startHarness(options: { holdDurationSeconds?: number } = {}): Promise<Harness> {
+export async function startHarness(
+  options: { holdDurationSeconds?: number; maxSeatsPerHold?: number } = {},
+): Promise<Harness> {
   const adminUrl = inject('pgAdminUrl');
   const db = await createTestDatabase({ adminUrl, migrationsDir: MIGRATIONS_DIR });
   const identity = await startTestIdentity();
@@ -41,11 +43,15 @@ export async function startHarness(options: { holdDurationSeconds?: number } = {
     nodeEnv: 'test',
     logLevel: 'silent',
     holdDurationSeconds: options.holdDurationSeconds ?? 480,
+    maxSeatsPerHold: options.maxSeatsPerHold ?? 10,
     // ADR-010 — the service verifies tokens itself against a real JWKS endpoint.
     jwksUri: identity.jwksUri,
     jwtIssuer: identity.issuer,
     jwtAudience: identity.audience,
     internalServiceToken: TEST_SERVICE_TOKEN,
+    // Phase 5 added waiting-room enforcement; the Phase 1-3 suites predate it and
+    // test allocation directly, so it is off here and covered by its own suite.
+    waitingRoomEnforcementEnabled: false,
     // Enough connections that the pool is not the bottleneck the test accidentally
     // measures; Postgres is configured for 300 backends.
     pgPoolMax: 60,
@@ -71,11 +77,18 @@ export async function startHarness(options: { holdDurationSeconds?: number } = {
     auth: identity.attendee,
     serviceHeaders: { 'x-internal-token': TEST_SERVICE_TOKEN },
     stop: async () => {
-      // Order matters: DROP DATABASE ... WITH FORCE terminates any surviving backend,
-      // which surfaces as an uncaught 57P01 on whatever connection was still open.
-      // The service pool is separate from the test pool, so it must be closed too.
-      await app.close();
-      await pool.end();
+      /*
+       * Order matters: DROP DATABASE ... WITH FORCE terminates any surviving
+       * backend, which surfaces as an uncaught 57P01 on whatever connection was
+       * still open. The service pool is separate from the test pool, so it must be
+       * closed too.
+       *
+       * Tolerant of already-closed resources: the crash-chaos suite kills the
+       * server and its pool on purpose, and teardown must not then fail the run
+       * for tidying up something the test already tidied.
+       */
+      await app.close().catch(() => {});
+      await pool.end().catch(() => {});
       await db.drop();
       await identity.stop();
     },

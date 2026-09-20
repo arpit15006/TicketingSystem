@@ -1,3 +1,19 @@
+/**
+ * An unset variable and an empty one must mean the same thing.
+ *
+ * Docker Compose substitutes `${FOO:-}` as an EMPTY STRING, not as an absent
+ * variable, so a plain `process.env.FOO !== undefined` check treats "not
+ * configured" as "configured with nothing" — which is how an empty
+ * JWT_PRIVATE_KEY reached jose and crashed the service on boot.
+ */
+function optional(name: string): string | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return undefined;
+  // A PEM cannot survive a .env file with its newlines intact, so they are
+  // escaped there and restored here.
+  return raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw;
+}
+
 function int(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
@@ -47,10 +63,10 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     refreshTokenTtlSeconds: int('REFRESH_TOKEN_TTL_SECONDS', 14 * 24 * 60 * 60),
     issuer: process.env['JWT_ISSUER'] ?? 'http://localhost:3001',
     audience: process.env['JWT_AUDIENCE'] ?? 'ticketing',
-    privateKeyPem: process.env['JWT_PRIVATE_KEY'],
-    publicKeyPem: process.env['JWT_PUBLIC_KEY'],
-    keyId: process.env['JWT_KEY_ID'],
-    bootstrapAdminEmail: process.env['BOOTSTRAP_ADMIN_EMAIL'],
+    privateKeyPem: optional('JWT_PRIVATE_KEY'),
+    publicKeyPem: optional('JWT_PUBLIC_KEY'),
+    keyId: optional('JWT_KEY_ID'),
+    bootstrapAdminEmail: optional('BOOTSTRAP_ADMIN_EMAIL'),
     redisUrl: process.env['REDIS_URL'] ?? '',
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',

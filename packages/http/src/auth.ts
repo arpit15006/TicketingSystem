@@ -52,7 +52,20 @@ export const authPlugin = fp<AuthPluginOptions>((fastify, opts, done) => {
   if (opts.localJwks !== undefined) {
     jwks = createLocalJWKSet(opts.localJwks);
   } else if (opts.jwksUri !== undefined) {
-    jwks = createRemoteJWKSet(new URL(opts.jwksUri), { cacheMaxAge: 600_000, cooldownDuration: 30_000 });
+    /*
+     * `cooldownDuration` is the minimum gap between refetches when a token
+     * arrives with a `kid` we have not seen.
+     *
+     * Kept short on purpose. If identity restarts with a different signing key
+     * — which happens whenever JWT_PRIVATE_KEY is unset and a keypair is
+     * generated at boot — every verifier holds a stale JWKS and rejects
+     * perfectly valid tokens until it refetches. A 30-second cooldown turns
+     * that into 30 seconds of 401s across the whole platform.
+     *
+     * The real fix is a stable, configured keypair (which is why production
+     * refuses to start without one); this bounds the damage when there is not.
+     */
+    jwks = createRemoteJWKSet(new URL(opts.jwksUri), { cacheMaxAge: 300_000, cooldownDuration: 5_000 });
   } else {
     throw new Error('authPlugin requires either jwksUri or localJwks');
   }

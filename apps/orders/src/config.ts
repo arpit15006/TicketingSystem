@@ -1,3 +1,9 @@
+/** Compose substitutes unset variables as empty strings; treat them as absent. */
+function str(name: string, fallback: string): string {
+  const raw = process.env[name];
+  return raw === undefined || raw.trim() === '' ? fallback : raw;
+}
+
 function int(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
@@ -52,7 +58,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     internalServiceToken: process.env['INTERNAL_SERVICE_TOKEN'] ?? 'dev-internal-service-token-change-me',
     reservationUrl: process.env['RESERVATION_URL'] ?? 'http://localhost:3003',
     catalogUrl: process.env['CATALOG_URL'] ?? 'http://localhost:3002',
-    razorpayBaseUrl: process.env['RAZORPAY_BASE_URL'] ?? 'https://api.razorpay.com',
+    razorpayBaseUrl: str('RAZORPAY_BASE_URL', 'https://api.razorpay.com'),
     razorpayKeyId: process.env['RAZORPAY_KEY_ID'] ?? '',
     razorpayKeySecret: process.env['RAZORPAY_KEY_SECRET'] ?? '',
     razorpayWebhookSecret: process.env['RAZORPAY_WEBHOOK_SECRET'] ?? '',

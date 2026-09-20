@@ -1,0 +1,18 @@
+13:57:51.739  gateway      info  fetching from remote server 
+13:57:51.739  reservation  info  incoming request           POST /reservations
+13:57:51.742  catalog      info  incoming request           GET /events/bc7d85b6-3c11-4380-a6e9-3f93a245d3f2
+13:57:51.744  catalog      info  request completed          -> 200
+13:57:51.745  reservation  info  hold won                   event="seat.hold.won" holdId="05380a27-e946-40ca-a5e5-042a46c2f595" seatIds=["62e11683-6074-461f-b8c7-8450185ef939"]
+13:57:51.746  gateway      info  response received          
+13:57:51.746  reservation  info  request completed          -> 201
+13:57:51.750  gateway      info  fetching from remote server 
+13:57:51.751  orders       info  incoming request           POST /orders
+13:57:51.762  reservation  info  incoming request           GET /holds/05380a27-e946-40ca-a5e5-042a46c2f595
+13:57:51.763  reservation  info  request completed          -> 200
+13:57:51.764  catalog      info  incoming request           GET /events/bc7d85b6-3c11-4380-a6e9-3f93a245d3f2
+13:57:51.765  catalog      info  request completed          -> 200
+13:57:51.769  reservation  info  incoming request           PATCH /holds/05380a27-e946-40ca-a5e5-042a46c2f595/extend
+13:57:51.770  reservation  info  request completed          -> 200
+13:57:51.881  gateway      info  response received          
+13:57:51.881  orders       info  order created              holdId="05380a27-e946-40ca-a5e5-042a46c2f595" orderId="4dcfc2bd-decb-4558-88a8-3fc812f270da" amountPaise=500000
+13:57:51.881  orders       info  request completed          -> 201

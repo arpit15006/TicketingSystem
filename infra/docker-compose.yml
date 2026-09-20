@@ -1,0 +1,269 @@
+# PRD §17 — one file, healthchecks on every container, `docker compose up` reaches
+# healthy with zero manual steps.
+#
+# Run from the repository root:  docker compose -f infra/docker-compose.yml up -d
+
+name: ticketing
+
+x-service-base: &service-base
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  environment: &service-env
+    NODE_ENV: production
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+    JWKS_URI: http://identity:3001/.well-known/jwks.json
+    JWT_ISSUER: ${JWT_ISSUER:-http://localhost:3000/identity}
+    JWT_AUDIENCE: ticketing
+    INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-service-token-change-me}
+    ADMISSION_TOKEN_SECRET: ${ADMISSION_TOKEN_SECRET:-dev-admission-secret-change-me}
+    KAFKA_BROKERS: redpanda:9092
+    REDIS_URL: redis://redis:6379
+    CATALOG_URL: http://catalog:3002
+    RESERVATION_URL: http://reservation:3003
+
+services:
+  # ── infrastructure ────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    command:
+      - postgres
+      # An on-sale opens a lot of backends at once; the default 100 is the first
+      # thing to run out and it looks like an application bug when it does.
+      - -c
+      - max_connections=300
+    volumes:
+      - ./init:/docker-entrypoint-initdb.d:ro
+      - postgres-data:/var/lib/postgresql/data
+    ports: ['5432:5432']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d postgres']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    # ADR-012 — Redis holds no correctness state, so losing it entirely on restart
+    # is acceptable by design. Persistence is deliberately off.
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    ports: ['6379:6379']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.6
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+      # Single node, no ZooKeeper (PRD §17).
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092,OUTSIDE://localhost:19092
+    ports: ['19092:19092', '9644:9644']
+    healthcheck:
+      test: ['CMD-SHELL', 'rpk cluster health | grep -q "Healthy:.*true"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # ── services ──────────────────────────────────────────────────────────────
+  identity:
+    <<: *service-base
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args: { SERVICE: identity }
+    environment:
+      <<: *service-env
+      PORT: 3001
+      DATABASE_URL: postgresql://identity:identity@postgres:5432/identity_db
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-organizer@demo.test}
+      # Generated at boot when unset, which is refused in production for a reason:
+      # a generated key is lost on restart and invalidates every live token.
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      NODE_ENV: ${IDENTITY_NODE_ENV:-development}
+    ports: ['3001:3001']
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://localhost:3001/readyz\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  catalog:
+    <<: *service-base
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args: { SERVICE: catalog }
+    environment:
+      <<: *service-env
+      PORT: 3002
+      DATABASE_URL: postgresql://catalog:catalog@postgres:5432/catalog_db
+    ports: ['3002:3002']
+    depends_on:
+      postgres: { condition: service_healthy }
+      identity: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://localhost:3002/readyz\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  reservation:
+    <<: *service-base
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args: { SERVICE: reservation }
+    environment:
+      <<: *service-env
+      PORT: 3003
+      DATABASE_URL: postgresql://reservation:reservation@postgres:5432/reservation_db
+      HOLD_DURATION_SECONDS: ${HOLD_DURATION_SECONDS:-480}
+      PG_POOL_MAX: ${RESERVATION_PG_POOL_MAX:-40}
+    ports: ['3003:3003']
+    depends_on:
+      postgres: { condition: service_healthy }
+      redpanda: { condition: service_healthy }
+      identity: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://localhost:3003/readyz\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  orders:
+    <<: *service-base
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args: { SERVICE: orders }
+    environment:
+      <<: *service-env
+      PORT: 3004
+      DATABASE_URL: postgresql://orders:orders@postgres:5432/orders_db
+      RAZORPAY_BASE_URL: ${RAZORPAY_BASE_URL:-https://api.razorpay.com}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      # Razorpay credentials are required when NODE_ENV=production, so orders runs
+      # in development mode unless they are supplied.
+      NODE_ENV: ${ORDERS_NODE_ENV:-development}
+    ports: ['3004:3004']
+    depends_on:
+      postgres: { condition: service_healthy }
+      redpanda: { condition: service_healthy }
+      reservation: { condition: service_healthy }
+      catalog: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://localhost:3004/readyz\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  waitingroom:
+    <<: *service-base
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args: { SERVICE: waitingroom }
+    environment:
+      <<: *service-env
+      PORT: 3005
+      ADMISSION_RATE_PER_SECOND: ${ADMISSION_RATE_PER_SECOND:-50}
+    ports: ['3005:3005']
+    depends_on:
+      redis: { condition: service_healthy }
+      identity: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://localhost:3005/healthz\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  notification:
+    <<: *service-base
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args: { SERVICE: notification }
+    environment:
+      <<: *service-env
+      PORT: 3006
+      DATABASE_URL: postgresql://notification:notification@postgres:5432/notification_db
+    ports: ['3006:3006']
+    depends_on:
+      postgres: { condition: service_healthy }
+      redpanda: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://localhost:3006/readyz\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  gateway:
+    <<: *service-base
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args: { SERVICE: gateway }
+    environment:
+      <<: *service-env
+      PORT: 3000
+      IDENTITY_URL: http://identity:3001
+      ORDERS_URL: http://orders:3004
+      WAITING_ROOM_URL: http://waitingroom:3005
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+    ports: ['3000:3000']
+    depends_on:
+      identity: { condition: service_healthy }
+      catalog: { condition: service_healthy }
+      reservation: { condition: service_healthy }
+      orders: { condition: service_healthy }
+      waitingroom: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://localhost:3000/healthz\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # ── load testing (profile: k6 — not started by `docker compose up`) ───────
+  k6:
+    image: grafana/k6:latest
+    profiles: ['k6']
+    volumes:
+      - ../loadtest:/loadtest:ro
+      - ../loadtest/results:/results
+    environment:
+      GATEWAY_URL: http://gateway:3000
+      K6_VUS: ${K6_VUS:-10000}
+      EVENT_ID: ${EVENT_ID:-}
+    depends_on:
+      gateway: { condition: service_healthy }
+    entrypoint: ['k6']
+
+volumes:
+  postgres-data:

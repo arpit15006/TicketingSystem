@@ -2,7 +2,17 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**', '**/.next/**', '**/migrations/**'] },
+  {
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/.next/**',
+      '**/migrations/**',
+      // k6 scripts run in k6's own runtime (not Node) and import from
+      // jslib.k6.io over https, so they are outside the TS project by nature.
+      'loadtest/**',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

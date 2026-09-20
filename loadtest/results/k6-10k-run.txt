@@ -1,0 +1,173 @@
+# k6 run: 10,000 VUs — 2026-09-20
+#
+# Every metric, threshold and total below is verbatim from the run.
+# Reproduce with:
+#   K6_VUS=10000 K6_RAMP=30s K6_DURATION=60s k6 run loadtest/onsale.js
+#
+# READ loadtest/results/README.md BEFORE QUOTING ANY LATENCY FROM THIS FILE.
+# 91% of these requests were 429s from a per-IP rate limiter and 16,322 got no
+# response at all, so p95/p99 here measure the environment, not the system.
+#
+# 169 per-second progress lines removed for readability.
+#
+# Transport-level failures, collapsed from individual log lines:
+#    15658 x  connection reset by peer (kernel accept queue overflow)
+#          e.g. time="2026-09-20T19:35:30+05:30" level=warning msg="Request Failed" error="Post \"http://localhost:3000/reservations\": read tcp <addr>-><addr>: read:
+#      664 x  request timeout
+#          e.g. time="2026-09-20T19:36:15+05:30" level=warning msg="Request Failed" error="Post \"http://localhost:3000/reservations\": request timeout"
+#
+# These are the macOS listen-backlog limit (kern.ipc.somaxconn = 128,
+# unraisable without root), not the service failing to allocate a seat. The
+# k6 script counts them separately as `connection_failures` for that reason.
+
+time="2026-09-20T19:35:13+05:30" level=warning msg="\"env\" level configuration overrode scenarios configuration entirely"
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+
+     execution: local
+        script: loadtest/onsale.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 10000 max VUs, 1m30s max duration (incl. graceful stop):
+              * default: 10000 looping VUs for 1m0s (gracefulStop: 30s)
+
+
+Run       [ 100% ] setup()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+time="2026-09-20T19:36:38+05:30" level=info msg="oversell_total after load: 0" source=console
+
+
+  █ THRESHOLDS 
+
+    oversell_suspected
+    ✓ 'count==0' count=0
+
+    unexpected_errors
+    ✗ 'rate<0.05' rate=100.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 181010 2151.792055/s
+    checks_succeeded...: 90.98% 164688 out of 181010
+    checks_failed......: 9.01%  16322 out of 181010
+
+    ✗ seat resolved to won or lost, never ambiguous
+      ↳  90% — ✓ 164688 / ✗ 16322
+
+    CUSTOM
+    connection_failures............: 16322   194.030992/s
+    hold_latency...................: avg=3.33s med=1.6s  p(95)=15s    p(99)=15.58s max=1m0s  
+    holds_lost.....................: 42      0.499283/s
+    holds_won......................: 515     6.122164/s
+    oversell_suspected.............: 0       0/s
+    rate_limited_429...............: 164131  1951.139615/s
+    unexpected_errors..............: 100.00% 16322 out of 16322
+
+    HTTP
+    http_req_duration..............: avg=3.33s med=1.6s  p(95)=15s    p(99)=15.58s max=1m0s  
+      { expected_response:true }...: avg=3.93s med=2.52s p(95)=12.34s p(99)=12.35s max=12.35s
+    http_req_failed................: 99.69%  180495 out of 181052
+    http_reqs......................: 181052  2152.291338/s
+
+    EXECUTION
+    iteration_duration.............: avg=3.42s med=1.62s p(95)=15.02s p(99)=16.21s max=1m1s  
+    iterations.....................: 181010  2151.792055/s
+    vus............................: 1       min=0                max=10000
+    vus_max........................: 10000   min=10000            max=10000
+
+    NETWORK
+    data_received..................: 77 MB   911 kB/s
+    data_sent......................: 166 MB  2.0 MB/s
+
+
+
+
+time="2026-09-20T19:36:38+05:30" level=error msg="thresholds on metrics 'unexpected_errors' have been crossed"

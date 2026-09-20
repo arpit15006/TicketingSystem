@@ -161,3 +161,30 @@ describe('registration, login and tokens', () => {
     expect(claims.roles).toContain(`organizer:event:${eventId}`);
   });
 });
+
+/**
+ * Regression for a boot-time crash found by `docker compose up`: Compose
+ * substitutes an unset `${VAR:-}` as an empty string, and treating that as
+ * "configured" sent an empty key to jose and killed the service on startup.
+ */
+describe('configuration robustness', () => {
+  it('treats an empty key environment variable as absent, not as an empty key', async () => {
+    const { loadConfig } = await import('../../src/config.js');
+    const { loadSigningKeys } = await import('../../src/keys.js');
+
+    const previous = { ...process.env };
+    process.env['JWT_PRIVATE_KEY'] = '';
+    process.env['JWT_PUBLIC_KEY'] = '';
+    process.env['JWT_KEY_ID'] = '';
+
+    try {
+      const config = loadConfig({ databaseUrl: 'postgresql://unused/unused', nodeEnv: 'test' });
+      expect(config.privateKeyPem).toBeUndefined();
+      // Falls back to a generated development keypair rather than crashing.
+      const keys = await loadSigningKeys(config);
+      expect(keys.jwks.keys).toHaveLength(1);
+    } finally {
+      process.env = previous;
+    }
+  });
+});

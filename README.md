@@ -5,7 +5,7 @@ It sells seats for events under one defining constraint: **a seat must never be 
 under a thousand simultaneous buyers, not when a service crashes, not when Redis is down, and not
 when a payment settles after the buyer's hold has already expired.
 
-> **Build status: Phases 1–5 of 8 complete and verified.** This README grows one phase at a time, and
+> **Build status: Phases 1–5 and 7 verified. Phase 6 (frontend) is on hold at the owner's request; Phase 8 is next.** This README grows one phase at a time, and
 > every number in it is copied from a real command's output. Sections belonging to unbuilt phases
 > say so rather than describing something that does not exist yet.
 > Progress: [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
@@ -81,13 +81,15 @@ resulting RSTs measure macOS, not seat allocation.)
 | Kafka broker killed mid-sale → zero events lost | 4 | ✅ verified |
 | **Redis killed mid-sale → zero oversells, fails open** | 5 | ✅ verified |
 | Queue ordering, admission control, SSE | 5 | ✅ verified |
+| Reservation service killed → seats free themselves | 7 | ✅ verified |
+| `docker compose up` healthy from a clean checkout | 7 | ✅ verified |
+| One `requestId` traced across every service | 7 | ✅ verified |
+| k6 at 10,000 VUs | 7 | ⚠️ ran; latency **not representative** — see §1.7 |
 | Idempotent consumers under redelivery | 4 | ✅ verified |
 | `requestId` traced through Kafka into the consumer | 4 | ✅ verified |
 | Resource-scoped authorization | 2 | ✅ verified |
 | Authenticated booking end to end through the gateway | 2 | ✅ verified |
 | 5,000-seat seed | 2 | ✅ verified |
-| k6 load test, real p50/p95/p99 | 7 | not built yet |
-| `requestId` traced end to end | 7 | not built yet |
 
 Full suite through Phase 5: **118 tests passing**, run four consecutive times with identical
 results, Phase 1's proof unchanged throughout.
@@ -198,6 +200,51 @@ reservation service, not a copy — the business keeps selling while the message
 The outage is driven by observed state rather than a 30-second sleep. Asserting "five relay cycles
 failed and nothing was marked published" is stronger than waiting and hoping, and PRD §19 rules out
 `sleep()` in tests anyway.
+
+### 1.7 One requestId across every service
+
+Real output, from the composed stack, for a single booking:
+
+```
+$ docker compose logs --no-color | grep "$REQ"
+
+13:57:51.739  gateway      info  fetching from remote server
+13:57:51.739  reservation  info  incoming request     POST /reservations
+13:57:51.742  catalog      info  incoming request     GET /events/bc7d85b6-…
+13:57:51.744  catalog      info  request completed    -> 200
+13:57:51.745  reservation  info  hold won             event="seat.hold.won" holdId="05380a27-…" seatIds=["62e11683-…"]
+13:57:51.746  reservation  info  request completed    -> 201
+13:57:51.750  gateway      info  fetching from remote server
+13:57:51.751  orders       info  incoming request     POST /orders
+13:57:51.762  reservation  info  incoming request     GET /holds/05380a27-…
+13:57:51.764  catalog      info  incoming request     GET /events/bc7d85b6-…
+13:57:51.769  reservation  info  incoming request     PATCH /holds/05380a27-…/extend
+13:57:51.881  orders       info  order created        holdId="05380a27-…" orderId="4dcfc2bd-…" amountPaise=500000
+13:57:51.881  orders       info  request completed    -> 201
+```
+
+That order is a **real Razorpay order** (`order_TeJdYoyvjcEJ4T`), created against their live test
+API. Full capture: [`loadtest/results/requestid-trace.txt`](loadtest/results/requestid-trace.txt).
+
+This is what ADR-015 bought instead of a week of OpenTelemetry: one `grep` shows a booking cross
+four services, including the internal hold lookup and the hold extension that bounds the
+payment-after-expiry race.
+
+### 1.8 Load test — what it does and does not show
+
+**It shows the invariant holds under load.** 10,000 virtual users, 181,052 requests,
+`oversell_total` still **0** — asserted by the k6 script itself, reading `/metrics` rather than
+taking it on trust.
+
+**It does not give usable latency numbers, so none are published here.** 91% of requests were
+`429` (the gateway rate-limits per IP at 300/min, and a load generator is one IP) and 16,322 got no
+response at all (macOS caps the listen backlog at 128, unraisable without root), with the generator
+and all ten containers on one laptop. `p95 = 15s` is queueing behind a rate limiter, not seat
+allocation — quoting it as system performance would be dishonest.
+
+The full breakdown and the procedure for a representative run are in
+[`loadtest/results/README.md`](loadtest/results/README.md). For allocation latency under
+contention, §1.1's figures are the clean measurement.
 
 ---
 
@@ -417,9 +464,15 @@ Permissions are **resource-scoped**, never flat globals — holding `organizer` 
 
 ## 9. Quickstart
 
-Requires Node 22+, pnpm, and a Docker daemon for the integration tests.
+Requires Node 22+, pnpm, and a Docker daemon.
 
 ```bash
+# The whole system, from a clean checkout
+pnpm keys:generate >> .env     # stable signing keys, so tokens survive restarts
+docker compose -f infra/docker-compose.yml --env-file .env up -d --wait
+pnpm seed                      # demo organizer, venue, on-sale event, 5,000 seats
+
+# ...or just the tests
 pnpm install
 pnpm typecheck && pnpm lint && pnpm build
 pnpm test                                        # 32 tests, real PostgreSQL
@@ -447,6 +500,8 @@ databases would be the first crack in database-per-service. It is safe to re-run
 | [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) | Phase breakdown, invariant matrix, risks |
 | [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) | Live phase gates and verification reports |
 | [`docs/ENVIRONMENT_AUDIT.md`](docs/ENVIRONMENT_AUDIT.md) | Phase 0 audit and the deviation register |
+| [`docs/runbook.md`](docs/runbook.md) | Operational procedures, led by "`oversell_total` is non-zero" |
+| [`loadtest/results/README.md`](loadtest/results/README.md) | Load-test output, and what it does and does not prove |
 
 ---
 
@@ -469,7 +524,7 @@ databases would be the first crack in database-per-service. It is safe to re-run
 
 Carried from [`DECISIONS.md`](DECISIONS.md) and tracked honestly as the build proceeds.
 
-- Phases 6–8 are not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
+- Phase 6 (frontend) is not built — on hold at the owner's request — and Phase 8 (segmented allocation) is not built yet; the table in §1.2 is the authoritative list of what is and is not proven.
 - Waiting-room fairness is approximate: position is by join timestamp in a sorted set, and a Redis failover could disturb ordering. It fails open and holds no correctness state, so the worst case is an unfair queue, never an oversell.
 - Admission tokens are HS256 with a shared secret — deliberate, since the token grants a queue place and no authority over a seat, an order or money.
 - Seat writes are single-node. Sharding by `event_id` is the natural next step and is unimplemented.

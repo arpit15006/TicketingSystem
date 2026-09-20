@@ -10,3 +10,5 @@ coverage/
 .tmp/
 .next/
 test-results/
+# Load-test output is a deliverable, so results/ is committed; raw noise is not.
+loadtest/results/*.json
