@@ -388,6 +388,57 @@ export async function buildServer(options: BuildServerOptions): Promise<OrdersSe
     },
   );
 
+  /* ---------------------------------------------------------------- GET /orders */
+
+  /**
+   * "My bookings". Own orders only — the filter is the caller's user id, not a
+   * parameter, so there is no way to ask for someone else's (PRD §9.2, `order:read`
+   * is `own`-scoped). Newest first; the settled ones a buyer actually wants to see
+   * again (confirmed) sort naturally near the top because they are recent.
+   */
+  app.get(
+    '/orders',
+    {
+      schema: {
+        querystring: Type.Object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }),
+      },
+    },
+    async (req) => {
+      const auth = requireAuth(req);
+      const rows = await pool.query<{
+        order_id: string;
+        event_id: string;
+        seat_ids: string[];
+        amount_paise: string;
+        status: string;
+        created_at: Date;
+        ticket_count: string;
+        scanned_count: string;
+      }>(
+        `SELECT o.order_id, o.event_id, o.seat_ids, o.amount_paise, o.status, o.created_at,
+                (SELECT count(*) FROM tickets t WHERE t.order_id = o.order_id) AS ticket_count,
+                (SELECT count(*) FROM tickets t WHERE t.order_id = o.order_id AND t.scanned_at IS NOT NULL) AS scanned_count
+         FROM orders o
+         WHERE o.user_id = $1
+         ORDER BY o.created_at DESC
+         LIMIT $2`,
+        [auth.userId, req.query.limit ?? 50],
+      );
+      return {
+        orders: rows.rows.map((row) => ({
+          orderId: row.order_id,
+          eventId: row.event_id,
+          seatCount: row.seat_ids.length,
+          amountPaise: Number(row.amount_paise),
+          status: row.status,
+          createdAt: row.created_at.toISOString(),
+          ticketCount: Number(row.ticket_count),
+          scannedCount: Number(row.scanned_count),
+        })),
+      };
+    },
+  );
+
   /* ------------------------------------------------------- GET /orders/:orderId */
 
   app.get('/orders/:orderId', { schema: { params: Type.Object({ orderId: UUID }) } }, async (req) => {

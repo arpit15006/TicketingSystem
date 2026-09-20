@@ -199,6 +199,18 @@ export interface OrderDetail {
   tickets: Ticket[]
 }
 
+/** One row of `GET /orders` — the caller's own bookings, newest first. */
+export interface OrderSummary {
+  orderId: string
+  eventId: string
+  seatCount: number
+  amountPaise: number
+  status: OrderStatus
+  createdAt: string
+  ticketCount: number
+  scannedCount: number
+}
+
 /** `POST /tickets/scan` (Phase 6a). */
 export interface ScanResult {
   ticketId: string

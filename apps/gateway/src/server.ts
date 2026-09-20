@@ -171,6 +171,11 @@ export async function buildServer({ config }: BuildServerOptions): Promise<Gatew
     // Seat inventory provisioning. Seats are reservation's alone to create, so the
     // route lives here and not under /catalog, which owns only seatmap geometry.
     { prefix: '/inventory', target: config.reservationUrl, rewritePrefix: '/inventory' },
+    // Read-only counters — oversell_total, the in-flight peak — so the storefront's
+    // concurrency demo can show INV-1's machine-checkable form after a storm. Every
+    // hit runs the invariant audit query; the edge rate limit is what keeps that
+    // from being a free way to load the database.
+    { prefix: '/metrics', target: config.reservationUrl, rewritePrefix: '/metrics' },
     { prefix: '/orders', target: config.ordersUrl, rewritePrefix: '/orders' },
     // The gate scanner. Orders owns tickets, so this is orders — it simply does not
     // belong under /orders, because scanning is not an operation on an order.

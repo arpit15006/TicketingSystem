@@ -223,29 +223,45 @@ function CameraScanner({ onCode, paused }: { onCode: (value: string) => void; pa
   const videoRef = React.useRef<HTMLVideoElement>(null)
   const [active, setActive] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [scans, setScans] = React.useState(0)
   const lastRef = React.useRef<{ value: string; at: number }>({ value: "", at: 0 })
+
+  /*
+   * The callback and the paused flag are read through refs so the decode loop
+   * depends on nothing but `active`. The first version listed `onCode` as an
+   * effect dependency; it is a new function on every render, so the first
+   * successful scan (which re-rendered the page) tore the reader down and the
+   * camera had to be started again by hand. Now the reader lives for as long as
+   * the camera is on and reports every code it sees, once each.
+   */
+  const onCodeRef = React.useRef(onCode)
   const pausedRef = React.useRef(paused)
   React.useEffect(() => {
+    onCodeRef.current = onCode
     pausedRef.current = paused
-  }, [paused])
+  }, [onCode, paused])
 
   React.useEffect(() => {
-    if (!active || videoRef.current === null) return
+    if (!active) return
+    const video = videoRef.current
+    if (video === null) return
     let controls: { stop: () => void } | null = null
     let cancelled = false
 
     void (async () => {
       try {
         const { BrowserQRCodeReader } = await import("@zxing/browser")
-        const reader = new BrowserQRCodeReader()
-        const started = await reader.decodeFromVideoDevice(undefined, videoRef.current ?? undefined, (result) => {
+        const reader = new BrowserQRCodeReader(undefined, { delayBetweenScanSuccess: 300, delayBetweenScanAttempts: 100 })
+        const started = await reader.decodeFromVideoDevice(undefined, video, (result) => {
           if (result === undefined || pausedRef.current) return
           const text = result.getText()
-          // The same code sits in front of the camera for many frames; report it once.
+          // The same code sits in front of the camera for many frames; report it
+          // once, but let it through again after a moment so a re-scan is possible.
           const now = Date.now()
-          if (text === lastRef.current.value && now - lastRef.current.at < 4000) return
+          if (text === lastRef.current.value && now - lastRef.current.at < 3000) return
           lastRef.current = { value: text, at: now }
-          onCode(text)
+          setScans((n) => n + 1)
+          onCodeRef.current(text)
         })
         if (cancelled) started.stop()
         else controls = started
@@ -259,7 +275,7 @@ function CameraScanner({ onCode, paused }: { onCode: (value: string) => void; pa
       cancelled = true
       controls?.stop()
     }
-  }, [active, onCode])
+  }, [active])
 
   return (
     <Card>
@@ -273,10 +289,18 @@ function CameraScanner({ onCode, paused }: { onCode: (value: string) => void; pa
             </div>
           )}
           {active && (
-            <div className="pointer-events-none absolute inset-8 rounded-lg border-2 border-white/60" />
+            <>
+              <div className="pointer-events-none absolute inset-8 rounded-lg border-2 border-white/60" />
+              <Badge className="absolute top-3 right-3 bg-black/50 text-white backdrop-blur hover:bg-black/50">
+                Scanning · {scans} read
+              </Badge>
+            </>
           )}
         </div>
         {error !== null && <p className="text-sm text-destructive">{error}</p>}
+        <p className="text-xs text-muted-foreground">
+          Keeps scanning until you stop it. Point at the next ticket; each code is reported once.
+        </p>
         <Button variant={active ? "outline" : "default"} onClick={() => setActive((v) => !v)}>
           {active ? <CameraOffIcon className="size-4" /> : <CameraIcon className="size-4" />}
           {active ? "Stop camera" : "Start camera"}

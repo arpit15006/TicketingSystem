@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query"
 import {
   ArmchairIcon,
   CalendarIcon,
+  FlaskConicalIcon,
   ClockIcon,
   MapPinIcon,
   ShieldCheckIcon,
@@ -265,6 +266,14 @@ export default function EventDetailPage() {
                 <p className="text-center text-xs text-muted-foreground">
                   On sale {formatEventDate(event.onsale_at)}
                 </p>
+              )}
+              {onsale && (
+                <Button variant="outline" size="sm" className="w-full" asChild>
+                  <Link href={`/proof?event=${eventId}`}>
+                    <FlaskConicalIcon className="size-4" />
+                    Test concurrency on this event
+                  </Link>
+                </Button>
               )}
             </CardContent>
           </Card>

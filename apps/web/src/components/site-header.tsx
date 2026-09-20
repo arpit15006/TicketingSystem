@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { LogOutIcon, ScanLineIcon, LayoutDashboardIcon, TicketIcon } from "lucide-react"
+import { FlaskConicalIcon, LogOutIcon, ScanLineIcon, LayoutDashboardIcon, TicketIcon, TicketsIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -65,6 +65,20 @@ export function SiteHeader() {
 
         <nav className="ml-auto flex items-center gap-1">
           <SearchCommand />
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/proof">
+              <FlaskConicalIcon className="size-4" />
+              <span className="hidden sm:inline">Proof</span>
+            </Link>
+          </Button>
+          {isAuthenticated && (
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/bookings">
+                <TicketsIcon className="size-4" />
+                <span className="hidden sm:inline">My bookings</span>
+              </Link>
+            </Button>
+          )}
           {canOrganize && (
             <Button variant="ghost" size="sm" asChild>
               <Link href="/organizer">
@@ -100,6 +114,13 @@ export function SiteHeader() {
                   <span>{user.fullName}</span>
                   <span className="text-xs font-normal text-muted-foreground">{user.email}</span>
                 </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/bookings">
+                    <TicketsIcon className="size-4" />
+                    My bookings
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void onLogout()}>
                   <LogOutIcon className="size-4" />
