@@ -122,6 +122,25 @@ export const AVAILABLE_SEATS_SQL = `
 `;
 
 /**
+ * Organizer dashboard aggregate: how much of an event has actually sold.
+ *
+ * The three buckets partition the seat table exactly, and `available` reuses the
+ * predicate from `AVAILABLE_SEATS_SQL` verbatim — ADR-003 again. A dashboard that
+ * counted `status = 'available'` alone would under-report supply by every expired
+ * hold, and would start disagreeing with what a buyer can actually book the moment
+ * the janitor is switched off. The janitor is cosmetic; this number must not be.
+ */
+export const SALES_SUMMARY_SQL = `
+  SELECT
+    (count(*))::int AS total,
+    (count(*) FILTER (WHERE status = 'sold'))::int AS sold,
+    (count(*) FILTER (WHERE status = 'held' AND held_until >= now()))::int AS held,
+    (count(*) FILTER (WHERE status = 'available' OR (status = 'held' AND held_until < now())))::int AS available
+  FROM seats
+  WHERE event_id = $1
+`;
+
+/**
  * PRD §8.2 — the janitor. Cosmetic only: it tidies rows that the predicate already
  * treats as available, purely so naive SELECTs and analytics read cleanly.
  * IT IS SAFE FOR THIS TO NEVER RUN. No test depends on it.

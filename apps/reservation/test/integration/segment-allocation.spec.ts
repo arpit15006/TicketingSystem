@@ -281,11 +281,14 @@ describe('segmented allocation', () => {
     const afterSale = await hold({ eventId, seatIds: [seatId], fromStop: 1, toStop: 3 });
     expect(afterSale.status).toBe(409);
 
-    // Release returns a held segment to the market.
-    const other = await hold({ eventId, seatIds: [seatIds[1]!], fromStop: 0, toStop: 4 });
+    // Release returns a held segment to the market. Both calls use one identity:
+    // `harness.auth()` mints a fresh random user each time, and only the buyer who
+    // owns a hold may release it (PRD §9.2).
+    const owner = await harness.auth(randomUUID());
+    const other = await hold({ eventId, seatIds: [seatIds[1]!], fromStop: 0, toStop: 4 }, owner);
     const released = await fetch(`${harness.baseUrl}/reservations/${other.body.holdId}`, {
       method: 'DELETE',
-      headers: await harness.auth(),
+      headers: owner,
     });
     expect(released.status).toBe(200);
 

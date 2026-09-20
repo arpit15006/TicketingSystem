@@ -233,16 +233,30 @@ open, seatmap falls back to Postgres.
 
 ---
 
-### Phase 6 — Frontend  ⛔ *confirm with the user before starting*
+### Phase 6 — Frontend  ✅ *user consulted; opened*
 
-**The user has asked to be consulted before Phase 6 begins.** Do not start the frontend without
-checking in first, even if Phase 5 is verified and the gate is otherwise open.
+The user gated this phase and has now opened it, choosing the two decisions it hinged on:
+**the browser calls the gateway directly** (CORS at the edge, not a Next BFF), and the backend routes
+§13's page list implies are **built, not stubbed**.
 
-PRD §16 Phase 6, §13, ADR-017. Next.js 15 App Router, Tailwind v4, shadcn/ui, **SVG** seatmap.
+Split in two, because half of it is backend and must pass the same gate as Phases 1–8.
+
+**Phase 6a — enablement (backend).** ✅ VERIFIED. `@fastify/cors` at the edge; owner-scoped
+`GET /reservations/:holdId`; `GET /inventory/:eventId/sales`; `POST /tickets/scan`; gateway proxy
+entries for `/tickets` and `/notifications`. Also fixed a missing ownership check on
+`DELETE /reservations/:holdId`. 21 new tests. Report in `IMPLEMENTATION_STATUS.md`.
+
+**Phase 6b — the app.** PRD §16 Phase 6, §13, ADR-017. Next.js 15 App Router on **:3007**,
+Tailwind v4, shadcn/ui + Shadcn Studio blocks, **SVG** seatmap.
 Routes: `/`, `/events/[id]`, `/events/[id]/queue`, `/events/[id]/seats`, `/checkout/[orderId]`,
-`/orders/[id]` (confirmation **and** compensation state), `/organizer`, `/scan`.
-Client talks **only to the gateway**. Hold countdown auto-releases at zero.
+`/orders/[id]` (confirmation **and** compensation state), `/organizer`, `/scan`, plus `/login` and
+`/register` — which §13 omits but auth requires.
+Client talks **only** to the gateway. Hold countdown auto-releases at zero.
 Budget: ≤ 15 % of project time (§13) — it must not consume time owed to the proofs.
+
+`apps/web` needs its own tsconfig (Next wants `moduleResolution: bundler` and `jsx: preserve`,
+the repo root is NodeNext ESM with `verbatimModuleSyntax`) and must be excluded from the root
+typecheck project, or `pnpm typecheck` breaks repo-wide.
 
 ---
 

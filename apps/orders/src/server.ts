@@ -293,6 +293,101 @@ export async function buildServer(options: BuildServerOptions): Promise<OrdersSe
     },
   );
 
+  /* ---------------------------------------------------------- POST /tickets/scan */
+
+  /**
+   * PRD §13 `/scan` — the gate scanner.
+   *
+   * Two properties matter here, and they are the same two that matter for a seat:
+   *
+   *  1. **Idempotent.** A scanner at a turnstile re-reads codes constantly, and a
+   *     flaky network makes the client retry. A second scan of a real ticket is a
+   *     normal event, not an error — it answers `alreadyScanned` with the original
+   *     timestamp and returns 200.
+   *
+   *  2. **Race-safe.** `scanned_at IS NULL` in the WHERE clause makes the UPDATE
+   *     itself the arbiter, exactly as `ACQUIRE_HOLD_SQL` does for seats (ADR-002).
+   *     Two turnstiles scanning one forwarded screenshot at the same instant:
+   *     exactly one row comes back, so exactly one gate opens. Reading first and
+   *     writing second would let both in.
+   */
+  app.post(
+    '/tickets/scan',
+    {
+      schema: {
+        body: Type.Object({ qrToken: Type.String({ minLength: 1, maxLength: 200 }) }, { additionalProperties: false }),
+      },
+      /*
+       * PRD §9.2 — `ticket:scan` is scoped to the event, so a scanner hired for one
+       * show cannot wave people into another. The event is resolved from the ticket
+       * itself; an unknown code resolves to nothing and is refused before the
+       * handler runs, which also means an unauthorized caller cannot use this route
+       * to probe whether a code is real.
+       */
+      preHandler: requirePermission('ticket:scan', async (req) => {
+        const { qrToken } = req.body as { qrToken: string };
+        const found = await pool.query<{ event_id: string }>(
+          `SELECT o.event_id FROM tickets t JOIN orders o ON o.order_id = t.order_id WHERE t.qr_token = $1`,
+          [qrToken],
+        );
+        return { resourceId: found.rows[0]?.event_id };
+      }),
+    },
+    async (req, reply) => {
+      const { qrToken } = req.body;
+
+      const found = await pool.query<{
+        ticket_id: string;
+        seat_id: string;
+        scanned_at: Date | null;
+        event_id: string;
+        order_status: string;
+      }>(
+        `SELECT t.ticket_id, t.seat_id, t.scanned_at, o.event_id, o.status AS order_status
+         FROM tickets t JOIN orders o ON o.order_id = t.order_id
+         WHERE t.qr_token = $1`,
+        [qrToken],
+      );
+
+      const ticket = found.rows[0];
+      if (ticket === undefined) throw new AppError(404, ErrorCode.notFound, 'No ticket matches that code');
+
+      /*
+       * A ticket row only ever exists for a confirmed order — it is written in the
+       * same transaction that confirms one (§10.1.10). This check is therefore
+       * defence in depth against a future path that issues one earlier, and it is
+       * cheap enough to keep.
+       */
+      if (ticket.order_status !== 'confirmed') {
+        throw new AppError(409, ErrorCode.conflict, 'That ticket is not valid for entry', {
+          orderStatus: ticket.order_status,
+        });
+      }
+
+      const claimed = await pool.query<{ scanned_at: Date }>(
+        `UPDATE tickets SET scanned_at = now() WHERE ticket_id = $1 AND scanned_at IS NULL RETURNING scanned_at`,
+        [ticket.ticket_id],
+      );
+
+      const admitted = claimed.rows[0];
+      const scannedAt = admitted?.scanned_at ?? ticket.scanned_at;
+
+      req.log.info(
+        { ticketId: ticket.ticket_id, eventId: ticket.event_id, admitted: admitted !== undefined },
+        admitted === undefined ? 'ticket already scanned' : 'ticket scanned',
+      );
+
+      return reply.status(200).send({
+        ticketId: ticket.ticket_id,
+        eventId: ticket.event_id,
+        seatId: ticket.seat_id,
+        admitted: admitted !== undefined,
+        alreadyScanned: admitted === undefined,
+        scannedAt: scannedAt === null ? null : scannedAt.toISOString(),
+      });
+    },
+  );
+
   /* ------------------------------------------------------- GET /orders/:orderId */
 
   app.get('/orders/:orderId', { schema: { params: Type.Object({ orderId: UUID }) } }, async (req) => {

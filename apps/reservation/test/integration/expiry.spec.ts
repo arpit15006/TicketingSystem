@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { startHarness, seedSeats, expireHold, type Harness } from '../helpers.js';
 
 /**
@@ -18,10 +19,10 @@ describe('hold expiry is a predicate, not a job', () => {
     await harness.stop();
   });
 
-  const hold = async (eventId: string, seats: string[]): Promise<{ status: number; body: any }> => {
+  const hold = async (eventId: string, seats: string[], userId?: string): Promise<{ status: number; body: any }> => {
     const response = await fetch(`${harness.baseUrl}/reservations`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...(await harness.auth()) },
+      headers: { 'content-type': 'application/json', ...(await harness.auth(userId)) },
       body: JSON.stringify({ eventId, seatIds: seats }),
     });
     return { status: response.status, body: await response.json() };
@@ -104,11 +105,14 @@ describe('hold expiry is a predicate, not a job', () => {
 
   it('releasing a hold returns the seat immediately', async () => {
     const { eventId, seatIds } = await seedSeats(harness.pool, 1);
-    const first = await hold(eventId, [seatIds[0]!]);
+    // One identity for both calls: `harness.auth()` mints a fresh random user each
+    // time, and only the buyer who owns a hold may release it (PRD §9.2).
+    const buyer = randomUUID();
+    const first = await hold(eventId, [seatIds[0]!], buyer);
 
     const release = await fetch(`${harness.baseUrl}/reservations/${first.body.holdId}`, {
       method: 'DELETE',
-      headers: await harness.auth(),
+      headers: await harness.auth(buyer),
     });
     expect(release.status).toBe(200);
 

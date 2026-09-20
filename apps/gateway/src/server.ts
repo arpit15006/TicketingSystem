@@ -2,11 +2,12 @@ import Fastify, { type FastifyInstance, type RawServerDefault } from 'fastify';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Logger } from 'pino';
 import proxy from '@fastify/http-proxy';
+import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { createRedisClient } from '@ticketing/http';
 import { createLogger } from '@ticketing/logger';
-import { requestIdPlugin, errorHandlerPlugin, AppError, REQUEST_ID_HEADER } from '@ticketing/http';
+import { requestIdPlugin, errorHandlerPlugin, AppError, REQUEST_ID_HEADER, IDEMPOTENCY_KEY_HEADER } from '@ticketing/http';
 import { ErrorCode } from '@ticketing/contracts';
 import type { Config } from './config.js';
 
@@ -31,6 +32,40 @@ export async function buildServer({ config }: BuildServerOptions): Promise<Gatew
   // greppable across six services.
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
+
+  /*
+   * PRD §13 — the browser talks only to the gateway, so this is the platform's
+   * entire CORS surface.
+   *
+   * Registered BEFORE the rate limiter and both auth hooks, deliberately. A
+   * preflight `OPTIONS` carries no `Authorization` header and no credentials, so
+   * letting it reach those hooks would spend rate-limit quota on a request that
+   * can never book anything — and would answer a browser's "may I?" with a 429.
+   *
+   * `allowedHeaders` is explicit rather than reflective. Every header the client
+   * legitimately sends is a header some service reads: omitting `idempotency-key`
+   * silently disables duplicate-request protection in the browser, which is the
+   * one place duplicate requests actually happen (double-tapped checkout).
+   */
+  await app.register(cors, {
+    origin: config.corsOrigins,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'authorization',
+      'content-type',
+      IDEMPOTENCY_KEY_HEADER,
+      'x-admission-token',
+      REQUEST_ID_HEADER,
+      'last-event-id',
+    ],
+    // So a browser can read the id out of a failed response and quote it in a bug
+    // report — the whole point of PRD §14's end-to-end request id.
+    exposedHeaders: [REQUEST_ID_HEADER, 'retry-after'],
+    // Bearer tokens, not cookies. Nothing here needs ambient credentials, and
+    // allowing them would widen the blast radius of a mistaken origin entry.
+    credentials: false,
+    maxAge: 600,
+  });
 
   /*
    * ADR-012 — rate limiting is edge behaviour and holds no correctness state.
@@ -137,7 +172,14 @@ export async function buildServer({ config }: BuildServerOptions): Promise<Gatew
     // route lives here and not under /catalog, which owns only seatmap geometry.
     { prefix: '/inventory', target: config.reservationUrl, rewritePrefix: '/inventory' },
     { prefix: '/orders', target: config.ordersUrl, rewritePrefix: '/orders' },
+    // The gate scanner. Orders owns tickets, so this is orders — it simply does not
+    // belong under /orders, because scanning is not an operation on an order.
+    { prefix: '/tickets', target: config.ordersUrl, rewritePrefix: '/tickets' },
     { prefix: '/queue', target: config.waitingRoomUrl, rewritePrefix: '/queue' },
+    // Read-only delivery log. Without this entry the notification service has no
+    // route to a browser at all, and the compensation message it records is
+    // written for a user who can never see it.
+    { prefix: '/notifications', target: config.notificationUrl, rewritePrefix: '/notifications' },
   ];
 
   for (const upstream of upstreams) {

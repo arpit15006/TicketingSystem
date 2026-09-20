@@ -26,7 +26,7 @@ import type { Config } from './config.js';
 import { withTransaction, withDeadlockRetry } from './db.js';
 // The allocation operations are now reached through the SeatAllocator (PRD §8.4);
 // only the shared availability SQL and hold extension are used directly here.
-import { extendHold, AVAILABLE_SEATS_SQL } from './allocation.js';
+import { extendHold, AVAILABLE_SEATS_SQL, SALES_SUMMARY_SQL } from './allocation.js';
 import { incr, auditInvariants, renderPrometheus, enterAllocation, exitAllocation } from './metrics.js';
 import { createAdmissionGuard } from './admission.js';
 import { createEventPolicyLoader } from './event-policy.js';
@@ -121,6 +121,51 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
       [holdId],
     );
     return Number(segmented.rows[0]?.count ?? 0) > 0 ? segmentAllocator : wholeSeatAllocator;
+  };
+
+  interface HoldRow {
+    hold_id: string;
+    event_id: string;
+    user_id: string;
+    seat_ids: string[];
+    status: string;
+    expires_at: Date;
+  }
+
+  const HOLD_SQL = `SELECT hold_id, event_id, user_id, seat_ids, status, expires_at FROM holds WHERE hold_id = $1`;
+
+  /** Throws 404 when the hold does not exist, 403 when it is someone else's. */
+  const requireHoldOwner = async (
+    client: import('pg').PoolClient | Pool,
+    holdId: string,
+    userId: string,
+  ): Promise<HoldRow> => {
+    const found = await client.query<HoldRow>(HOLD_SQL, [holdId]);
+    const hold = found.rows[0];
+    if (hold === undefined) throw holdNotFound(holdId);
+    if (hold.user_id !== userId) {
+      // Deliberately a 403 and not a 404: the caller already proved they know a
+      // real hold id, so pretending it does not exist conceals nothing and makes
+      // a legitimate client's bug (stale id after a re-login) much harder to read.
+      throw new AppError(403, ErrorCode.forbidden, 'This hold belongs to another user', { holdId });
+    }
+    return hold;
+  };
+
+  /** The wire shape shared by the internal and the owner-scoped hold reads. */
+  const describeHold = async (hold: HoldRow) => {
+    const seats = await pool.query<{ seat_id: string; tier_id: string; status: string }>(
+      `SELECT seat_id, tier_id, status FROM seats WHERE seat_id = ANY($1) ORDER BY seat_id`,
+      [hold.seat_ids],
+    );
+    return {
+      holdId: hold.hold_id,
+      eventId: hold.event_id,
+      userId: hold.user_id,
+      status: hold.status,
+      expiresAt: hold.expires_at.toISOString(),
+      seats: seats.rows.map((row) => ({ seatId: row.seat_id, tierId: row.tier_id, status: row.status })),
+    };
   };
 
   app.get('/healthz', async () => ({ status: 'ok', service: 'reservation' }));
@@ -387,13 +432,59 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
     },
   );
 
+  /* ------------------------------------------- GET /inventory/:eventId/sales */
+
+  /**
+   * PRD §13 — the organizer dashboard's "live sales".
+   *
+   * Reservation answers this and not catalog, because seat state lives here and
+   * nowhere else (PRD §4, ADR-006). Catalog is allowed to be seconds stale about a
+   * seatmap; it is not allowed to hold a second opinion about what is sold.
+   *
+   * Authorized by an explicit `organizer:event:<id>` grant, exactly as seat
+   * provisioning is: this service has no idea who owns an event — that fact is
+   * catalog's — so it must not pretend it can resolve ownership.
+   */
+  app.get(
+    '/inventory/:eventId/sales',
+    {
+      schema: { params: Type.Object({ eventId: UUID }) },
+      preHandler: requirePermission('event:update', (req) => ({
+        resourceId: (req.params as { eventId: string }).eventId,
+      })),
+    },
+    async (req) => {
+      const { eventId } = req.params;
+      const result = await pool.query<{ total: number; sold: number; held: number; available: number }>(
+        SALES_SUMMARY_SQL,
+        [eventId],
+      );
+      const row = result.rows[0];
+      if (row === undefined || row.total === 0) {
+        throw new AppError(404, ErrorCode.notFound, 'No seat inventory exists for this event', { eventId });
+      }
+      return { eventId, ...row };
+    },
+  );
+
   /* ------------------------------------------------- DELETE /reservations/:holdId */
 
   app.delete('/reservations/:holdId', { schema: { params: Type.Object({ holdId: UUID }) } }, async (req, reply) => {
-    requireUserId(req);
+    const userId = requireUserId(req);
     const { holdId } = req.params;
 
     const result = await withTransaction(pool, async (client) => {
+      /*
+       * ADR-010 — a hold is an `own`-scoped resource, so the check belongs here.
+       *
+       * Without it, any authenticated caller who learns a hold id can hand someone
+       * else's seats back to the market. That can never oversell — the conditional
+       * UPDATE still decides who wins the seat afterwards — but it gives a rival a
+       * way to cancel a buyer mid-checkout, which is precisely what the
+       * resource-scoped model in PRD §9.2 exists to prevent.
+       */
+      await requireHoldOwner(client, holdId, userId);
+
       const allocator = await allocatorForHold(client, holdId);
       return allocator.release(client, { holdId, requestId: req.requestId });
     });
@@ -451,32 +542,32 @@ export async function buildServer({ config, pool }: BuildServerOptions): Promise
     { schema: { params: Type.Object({ holdId: UUID }) }, preHandler: internalOnly },
     async (req) => {
       const { holdId } = req.params;
-      const found = await pool.query<{
-        hold_id: string;
-        event_id: string;
-        user_id: string;
-        seat_ids: string[];
-        status: string;
-        expires_at: Date;
-      }>(`SELECT hold_id, event_id, user_id, seat_ids, status, expires_at FROM holds WHERE hold_id = $1`, [holdId]);
-
+      const found = await pool.query<HoldRow>(HOLD_SQL, [holdId]);
       const hold = found.rows[0];
       if (hold === undefined) throw holdNotFound(holdId);
-
-      const seats = await pool.query<{ seat_id: string; tier_id: string; status: string }>(
-        `SELECT seat_id, tier_id, status FROM seats WHERE seat_id = ANY($1) ORDER BY seat_id`,
-        [hold.seat_ids],
-      );
-
-      return {
-        holdId: hold.hold_id,
-        eventId: hold.event_id,
-        userId: hold.user_id,
-        status: hold.status,
-        expiresAt: hold.expires_at.toISOString(),
-        seats: seats.rows.map((row) => ({ seatId: row.seat_id, tierId: row.tier_id, status: row.status })),
-      };
+      return describeHold(hold);
     },
+  );
+
+  /* ------------------------------------------- GET /reservations/:holdId (owner) */
+
+  /**
+   * The same view as above, for the buyer who owns the hold.
+   *
+   * It exists because `expires_at` is otherwise told to the client exactly once,
+   * in the `POST /reservations` response: reload the seat page and the countdown
+   * has nothing authoritative to count down to. A client guessing from its own
+   * clock would drift, and would keep a dead hold on screen after the server had
+   * already let the seats go.
+   *
+   * Strictly a read of the caller's own resource. Finalization and extension stay
+   * `internalOnly` — those move seats and money, and a browser must never reach
+   * them (PRD §10.1).
+   */
+  app.get(
+    '/reservations/:holdId',
+    { schema: { params: Type.Object({ holdId: UUID }) } },
+    async (req) => describeHold(await requireHoldOwner(pool, req.params.holdId, requireUserId(req))),
   );
 
   /* ------------------------------------------------ PATCH /holds/:holdId/extend */

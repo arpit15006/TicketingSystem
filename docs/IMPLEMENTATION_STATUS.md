@@ -14,7 +14,8 @@ Legend: ✅ VERIFIED · 🔄 IN PROGRESS · ⏳ BLOCKED (gated by an earlier pha
 | Phase 3 | Orders + Razorpay | ✅ VERIFIED |
 | Phase 4 | Kafka + outbox + notification | ✅ VERIFIED |
 | Phase 5 | Waiting room | ✅ VERIFIED |
-| Phase 6 | Frontend | ⛔ HOLD — **user asked to be consulted before this phase begins** |
+| Phase 6a | Frontend enablement (backend) | ✅ VERIFIED |
+| Phase 6b | Frontend (Next.js `apps/web`) | 🔄 IN PROGRESS — started on the user's go-ahead |
 | Phase 7 | Proof + chaos + load | 🟡 **MOSTLY VERIFIED** — infra, chaos, trace and runbook done; k6 numbers not representative (see report) |
 | Phase 8 | Segmented allocation | ✅ VERIFIED |
 
@@ -638,6 +639,119 @@ determinism: 4 consecutive full runs, 118/118, zero unhandled errors
 
 Phase 6 (frontend) is **on hold at the user's request** — it will not begin without checking in first.
 
+
+---
+
+## PHASE 6a VERIFICATION REPORT — frontend enablement
+
+Phase 6 was gated on the user, who opened it and chose the two decisions it hinged on: the browser
+talks to the gateway **directly** (so CORS lives at the edge), and the three backend routes the
+PRD's page list implies but the services never grew get built rather than stubbed.
+
+Splitting 6a out is deliberate. Every item here is a backend change, so it must pass the same gate
+as Phases 1–8 *before* a single line of UI depends on it. None of it touches allocation.
+
+**What the audit found**
+
+Reading the real route tables rather than the PRD's intent turned up seven gaps between the eight
+pages in §13 and the running system. Five were addressed here; two were judged not worth code:
+
+| # | Gap | Resolution |
+|---|---|---|
+| 1 | No CORS anywhere — a browser could not call the gateway at all | `@fastify/cors` at the edge, exact-origin allowlist |
+| 2 | Gateway owns `:3000`, Next's dev default | `apps/web` moved to `:3007` (notification already owns `:3006`) |
+| 3 | `GET /holds/:holdId` is `internalOnly` — a reloaded seat page could not rebuild its countdown | new owner-scoped `GET /reservations/:holdId` |
+| 4 | `/scan` had no endpoint at all | new `POST /tickets/scan` |
+| 5 | `/organizer` live sales had no aggregate | new `GET /inventory/:eventId/sales` |
+| 6 | Notification unreachable from a browser | gateway proxy entry added |
+| 7 | `/login`, `/register` missing from §13's page table | frontend-only; no backend change needed |
+
+**The bug found on the way**
+
+`DELETE /reservations/:holdId` called `requireUserId` and then **never compared it to the hold
+owner**. Any authenticated caller who learned a hold id could hand another buyer's seats back to
+the market — cancelling someone mid-checkout. It could never oversell (the conditional UPDATE still
+arbitrates the seat afterwards), so no proof test caught it; it is an authorization failure, not an
+allocation one.
+
+It survived because all three existing release call sites happened to use the owner's own token. Two
+of them only *appeared* to: `harness.auth()` mints a **fresh random user id on every call**, so
+`expiry.spec.ts` and `segment-allocation.spec.ts` were creating a hold as one user and releasing it
+as another, and passing because the check was absent. Both now pin one identity across the pair.
+
+The regression test was verified by reverting the fix and watching it fail — `expected 200 to be
+403` — before restoring it. A regression test never seen failing proves nothing.
+
+**Implementation**
+- [x] `@fastify/cors` registered **before** the rate limiter and both auth hooks, so a preflight cannot spend quota or be answered with a 429
+- [x] `allowedHeaders` explicit: `authorization`, `content-type`, `idempotency-key`, `x-admission-token`, `x-request-id`, `last-event-id`
+- [x] `x-request-id` in `exposedHeaders` — PRD §14's id is useless if the browser cannot read it
+- [x] `CORS_ORIGINS` allowlist, never `*`; `credentials: false` (bearer tokens, no cookies)
+- [x] `GET /reservations/:holdId` — owner-scoped; 403 for a stranger, 404 for a missing hold
+- [x] `DELETE /reservations/:holdId` — ownership check added (the bug above)
+- [x] `GET /inventory/:eventId/sales` — `sold`/`held`/`available`/`total`, authorized by an explicit `organizer:event:<id>` grant, exactly as seat provisioning is
+- [x] `SALES_SUMMARY_SQL` reuses the `AVAILABLE_SEATS_SQL` predicate verbatim, so an expired hold counts as available (ADR-003) — a dashboard must not disagree with what a buyer can book
+- [x] `POST /tickets/scan` — `ticket:scan` scoped to the event resolved from the ticket; idempotent replay; `scanned_at IS NULL` in the UPDATE makes the write itself the arbiter (ADR-002's shape, one table over)
+- [x] Gateway proxy entries for `/tickets` and `/notifications`
+- [x] `.env.example` updated; **no secret added** — real Razorpay values stay in the gitignored `.env`
+
+**Tests added** — 21 across three new suites
+
+| Suite | Tests | Covers |
+|---|---|---|
+| `apps/gateway/test/unit/cors.spec.ts` | 6 | preflight allowed/denied, full header allowlist, exposed request id, preflight spends no rate-limit quota, real requests still limited |
+| `apps/reservation/test/integration/hold-ownership.spec.ts` | 6 | owner re-read returns the identical `expiresAt`; 403 for a stranger; 404 for a missing hold; **stranger cannot release, and the seat stays held**; owner still can; expired hold reads as expired |
+| `apps/reservation/test/integration/sales-summary.spec.ts` | 4 | three buckets partition the inventory; **an expired hold counts as available while the row still reads `held`**, and agrees with `/availability`; attendee and wrong-event organizer both 403; 404 with no inventory |
+| `apps/orders/test/integration/ticket-scan.spec.ts` | 5 | admits once then reports replay with the original timestamp; **20 concurrent scans → exactly 1 admitted**; wrong-event scanner 403 with the ticket untouched; attendee 403; unknown code 403 |
+
+**Verification — executed, real output**
+
+```
+pnpm typecheck   → clean
+pnpm lint        → clean
+pnpm build       → all 11 workspace packages compiled
+pnpm test        → Test Files 26 passed (26)
+                   Tests      151 passed (151)
+```
+
+Regression evidence from that run — every earlier phase's proof still holds, unchanged:
+
+```
+──────── OVERSELL PROOF ────────
+requests fired      : 1000 (real parallel HTTP)
+status counts       : {"201":100,"409":900}
+peak concurrent allocations in-flight: 82
+oversell_total      : 0  ✅
+
+──────── REDIS CHAOS PROOF ────────
+requests fired      : 500 (real parallel HTTP, through the gateway)
+status counts       : {"201":50,"409":450}
+oversell_total      : 0  ✅  (Redis was down for all of it)
+
+──────── SEGMENT CONCURRENCY PROOF ────────
+requests fired : 500 (real parallel HTTP, overlapping legs)
+status counts  : {"201":50,"409":450}
+```
+
+**Guardrails**
+- [x] No ORM — raw SQL throughout, including both new queries
+- [x] Redis holds no correctness state — CORS and rate limiting remain edge behaviour, still fail-open
+- [x] No Redlock, no lock for allocation — the scan route uses a conditional UPDATE, the same mechanism
+- [x] No background reaper — `SALES_SUMMARY_SQL` derives expiry from the predicate, and the janitor is off in every test
+- [x] Authorization **not** centralized at the gateway — all three new routes enforce their own permission; the gateway still verifies signature only
+- [x] No cross-service database access — the sales aggregate is answered by the service that owns seat state
+- [x] Allocation SQL byte-for-byte unchanged
+
+**Honest limits**
+- The 20-way concurrent scan is real parallel HTTP, but unlike the oversell proof there is no
+  in-flight gauge proving the requests overlapped **inside** the database. The guarantee rests on the
+  conditional UPDATE, which is the same mechanism proven under contention elsewhere.
+- `GET /inventory/:eventId/sales` is authorized by an explicit `organizer:event:<id>` grant because
+  reservation cannot resolve event ownership — that fact lives in catalog. An organizer who created
+  an event through catalog therefore needs that grant issued before the dashboard will answer them.
+- CORS was verified with `inject`, not a real browser.
+
+**Exit criteria**: ✅ met. Phase 6b (the Next.js app) may proceed.
 
 ---
 
