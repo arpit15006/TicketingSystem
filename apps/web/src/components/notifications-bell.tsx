@@ -36,7 +36,7 @@ export function NotificationsBell() {
     queryKey: ["notifications"],
     queryFn: async () => (await api<{ notifications: NotificationRow[] }>("/notifications?limit=20")).notifications,
     enabled: isAuthenticated,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   })
 
   if (!isAuthenticated) return null

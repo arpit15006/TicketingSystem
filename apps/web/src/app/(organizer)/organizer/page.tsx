@@ -76,7 +76,7 @@ export default function OrganizerOverview() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Inventory by event</CardTitle>
-            <CardDescription>Refreshes every 5 seconds.</CardDescription>
+            <CardDescription>Refreshes every 15 seconds.</CardDescription>
           </CardHeader>
           <CardContent>
             <SalesChart data={chartData} />

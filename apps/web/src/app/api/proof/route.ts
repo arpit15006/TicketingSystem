@@ -62,19 +62,50 @@ export async function POST(request: Request): Promise<Response> {
 
   const headers = { authorization, "content-type": "application/json" }
 
+  class RateLimited extends Error {
+    constructor(readonly retryAfterSeconds: number | null) {
+      super("rate limited")
+    }
+  }
+
   const availability = async (): Promise<number> => {
     const r = await fetch(`${GATEWAY}/availability?eventId=${eventId}&limit=5000`)
+    if (r.status === 429) throw new RateLimited(Number(r.headers.get("retry-after")) || null)
     if (!r.ok) throw new Error(`availability failed: ${r.status}`)
     return ((await r.json()) as { available: number }).available
   }
 
+  /*
+   * The gateway limits per IP, and behind the compose bridge the browser and this
+   * server are one IP. A 429 before the storm even starts is not a finding about
+   * the allocator — say what it is and how long to wait.
+   */
+  const rateLimitedResponse = (e: RateLimited): Response =>
+    NextResponse.json(
+      {
+        error:
+          `The gateway's per-IP rate limit is exhausted (storefront polling and this storm share one address). ` +
+          (e.retryAfterSeconds !== null ? `Try again in ${e.retryAfterSeconds}s, ` : "Wait a minute, ") +
+          "or raise RATE_LIMIT_MAX for local runs.",
+        rateLimited: true,
+      },
+      { status: 429 }
+    )
+
   /* ── the seats under contention ────────────────────────────────────── */
   const free = await fetch(`${GATEWAY}/availability?eventId=${eventId}&limit=${seats}`)
+  if (free.status === 429) return rateLimitedResponse(new RateLimited(Number(free.headers.get("retry-after")) || null))
   if (!free.ok) return NextResponse.json({ error: `availability failed: ${free.status}` }, { status: 502 })
   const targets = ((await free.json()) as { seats: { seat_id: string }[] }).seats.map((s) => s.seat_id)
   if (targets.length === 0) return NextResponse.json({ error: "No free seats on this event" }, { status: 409 })
 
-  const availabilityBefore = await availability()
+  let availabilityBefore: number
+  try {
+    availabilityBefore = await availability()
+  } catch (e) {
+    if (e instanceof RateLimited) return rateLimitedResponse(e)
+    throw e
+  }
 
   /* ── the storm ─────────────────────────────────────────────────────── */
   type Outcome = { status: number; ms: number; holdId?: string; seatId?: string; requestId?: string }
@@ -116,7 +147,7 @@ export async function POST(request: Request): Promise<Response> {
   const distinctWinningSeats = new Set(winningSeats).size
   const duplicateWins = winningSeats.length - distinctWinningSeats
 
-  const availabilityAfter = await availability()
+  const availabilityAfter = await availability().catch((e: unknown) => (e instanceof RateLimited ? -1 : Promise.reject(e)))
 
   const latencies = outcomes.filter((o) => o.status !== 0).map((o) => o.ms).sort((a, b) => a - b)
 
@@ -130,7 +161,7 @@ export async function POST(request: Request): Promise<Response> {
       return r.ok
     })
   )
-  const availabilityRestored = await availability()
+  const availabilityRestored = await availability().catch((e: unknown) => (e instanceof RateLimited ? -1 : Promise.reject(e)))
 
   /* ── the service's own word ────────────────────────────────────────── */
   let metrics: Record<string, number> | null = null

@@ -71,8 +71,14 @@ function Proof() {
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
         body: JSON.stringify({ eventId, requests, seats }),
       })
-      const body = (await r.json()) as Result & { error?: string }
-      if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+      const body = (await r.json()) as Result & { error?: string; rateLimited?: boolean }
+      if (!r.ok) {
+        if (body.rateLimited === true) {
+          toast.warning("Rate limited — not a result", { description: body.error, duration: 8000 })
+          return
+        }
+        throw new Error(body.error ?? `HTTP ${r.status}`)
+      }
       setResult(body)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "The storm failed to start")
@@ -136,7 +142,7 @@ function Proof() {
             <Field>
               <FieldLabel>Requests: {requests}</FieldLabel>
               <Slider min={20} max={300} step={10} value={[requests]} onValueChange={(v) => setRequests(v[0] ?? 200)} />
-              <FieldDescription>Capped at 300 — the gateway&apos;s per-IP rate limit per minute.</FieldDescription>
+              <FieldDescription>Capped at 300. The gateway limits per IP per minute — locally the storefront&apos;s own polling counts against the same bucket.</FieldDescription>
             </Field>
             <Field>
               <FieldLabel>Seats under contention: {Math.min(seats, requests)}</FieldLabel>
@@ -191,9 +197,9 @@ function Proof() {
                     <TableBody>
                       <Check ok={result.duplicateWins === 0} label="Every winning seat id is distinct" detail={`${result.distinctWinningSeats} distinct of ${result.outcomes.won} wins, ${result.duplicateWins} duplicates`} />
                       <Check ok={result.outcomes.won <= result.seats} label="Wins never exceed the seats under contention" detail={`${result.outcomes.won} ≤ ${result.seats}`} />
-                      <Check ok={result.availabilityAfter === result.expectedAfter} label="Availability dropped by exactly the number of wins" detail={`${result.availabilityBefore} → ${result.availabilityAfter} (expected ${result.expectedAfter})`} />
+                      <Check ok={result.availabilityAfter === result.expectedAfter} label="Availability dropped by exactly the number of wins" detail={result.availabilityAfter === -1 ? "could not re-check: rate limited" : `${result.availabilityBefore} → ${result.availabilityAfter} (expected ${result.expectedAfter})`} />
                       <Check ok={result.metrics === null || result.metrics.oversell_total === 0} label="Service reports oversell_total = 0" detail={result.metrics === null ? "metrics unavailable" : `oversell_total ${result.metrics.oversell_total}`} />
-                      <Check ok={result.availabilityRestored === result.availabilityBefore} label="Every hold released afterwards" detail={`${result.released} released, availability back to ${result.availabilityRestored}`} />
+                      <Check ok={result.availabilityRestored === result.availabilityBefore} label="Every hold released afterwards" detail={result.availabilityRestored === -1 ? `${result.released} released; could not re-check: rate limited` : `${result.released} released, availability back to ${result.availabilityRestored}`} />
                     </TableBody>
                   </Table>
                 </CardContent>

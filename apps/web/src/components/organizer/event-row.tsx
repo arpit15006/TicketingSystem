@@ -37,7 +37,7 @@ export function useSales(eventId: string) {
   return useQuery<SalesSummary, ApiError>({
     queryKey: ["sales", eventId],
     queryFn: async () => api<SalesSummary>(`/inventory/${eventId}/sales`),
-    refetchInterval: 5000,
+    refetchInterval: 15_000,
     retry: false,
   })
 }
