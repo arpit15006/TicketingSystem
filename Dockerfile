@@ -27,14 +27,19 @@ COPY apps/reservation/package.json  apps/reservation/
 COPY apps/orders/package.json       apps/orders/
 COPY apps/waitingroom/package.json  apps/waitingroom/
 COPY apps/notification/package.json apps/notification/
-RUN pnpm install --frozen-lockfile
+# Present only so the workspace matches the lockfile; its dependencies are not
+# installed and its source is excluded by .dockerignore.
+COPY apps/web/package.json          apps/web/
+RUN pnpm install --frozen-lockfile --filter '!@ticketing/web'
 
 # ── build ────────────────────────────────────────────────────────────────────
 FROM deps AS build
 COPY tsconfig.base.json tsconfig.json ./
 COPY packages/ packages/
 COPY apps/ apps/
-RUN pnpm -r --workspace-concurrency=1 build
+# The frontend is built and deployed separately; `next build` here would fail on
+# dependencies this image deliberately does not carry.
+RUN pnpm -r --workspace-concurrency=1 --filter '!@ticketing/web' build
 
 # ── runtime ──────────────────────────────────────────────────────────────────
 FROM base AS runtime

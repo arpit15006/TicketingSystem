@@ -6,4 +6,9 @@ node_modules
 .pgdata
 coverage
 *.log
-apps/web/.next
+
+# The frontend has no business inside a backend service image. Its package.json
+# stays so the workspace shape still matches pnpm-lock.yaml for --frozen-lockfile;
+# everything else is excluded, and the Dockerfile filters it out of the build.
+apps/web/**
+!apps/web/package.json

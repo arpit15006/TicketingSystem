@@ -235,7 +235,11 @@ services:
       IDENTITY_URL: http://identity:3001
       ORDERS_URL: http://orders:3004
       WAITING_ROOM_URL: http://waitingroom:3005
+      NOTIFICATION_URL: http://notification:3006
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      # PRD §13 — the browser origin allowed to reach the edge. apps/web runs on
+      # 3007; the gateway owns 3000 and notification owns 3006.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3007}
     ports: ['3000:3000']
     depends_on:
       identity: { condition: service_healthy }
