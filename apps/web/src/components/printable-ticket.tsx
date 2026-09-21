@@ -8,15 +8,17 @@ import { cn } from "cn"
  * The paper ticket.
  *
  * The screen page prints badly by definition: its hero is a CSS gradient the
- * print pipeline drops, so the title rendered white-on-white and came out grey
- * and unreadable, with the stepper, nav and footer along for the ride. Rather
- * than bend the screen layout into paper with `print:` variants, this is a
- * separate sheet — hidden on screen, the only thing visible in print — laid out
- * for A4 in ink that is explicitly opted into colour (`print-color-adjust`).
+ * print pipeline drops, so the title came out grey on white and unreadable, with
+ * the stepper and the page chrome along for the ride. Rather than bend the screen
+ * layout into paper with `print:` variants, this is a separate sheet — hidden on
+ * screen, the only thing visible in print — laid out for A4 in ink that is
+ * explicitly opted into colour. Its styles live in `globals.css` under
+ * `@media print`, in literal colours: the theme tokens follow dark mode, and a
+ * ticket printed at 1am should not arrive as white ink on a black rectangle.
  *
- * Everything the gate or the buyer needs is on the page itself: the codes, the
- * seat and ticket ids behind them, the venue, and the order it all came from.
- * A printed ticket has no network to fall back on.
+ * Every stub carries the event, the venue, the seat and its own ticket id, because
+ * a stub is made to be torn off and handed over, and paper has no network to fall
+ * back on.
  */
 export function PrintableTicket({ order, event }: { order: OrderDetail; event: EventDetail }) {
   const count = order.tickets.length
@@ -69,42 +71,44 @@ export function PrintableTicket({ order, event }: { order: OrderDetail; event: E
         <ul className="tk-stubs">
           {order.tickets.map((ticket, index) => (
             <li key={ticket.ticket_id} className="tk-stub">
-              <div className="tk-rail">
-                <span>Admit one</span>
-              </div>
+              <div className="tk-stub-card">
+                <div className="tk-rail">
+                  <span>Admit one</span>
+                </div>
 
-              <div className="tk-stub-main">
-                <p className="tk-stub-n">
-                  Ticket {index + 1} <span>of {count}</span>
-                </p>
-                <p className="tk-stub-title">{event.title}</p>
-                <dl className="tk-stub-grid">
-                  <div>
-                    <dt>Doors</dt>
-                    <dd>{formatEventDate(event.starts_at)}</dd>
-                  </div>
-                  <div>
-                    <dt>Venue</dt>
-                    <dd>
-                      {event.venue_name}, {event.venue_city}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Seat</dt>
-                    <dd className="tk-mono">{ticket.seat_id.slice(0, 8).toUpperCase()}</dd>
-                  </div>
-                  <div>
-                    <dt>Ticket</dt>
-                    <dd className="tk-mono">{ticket.ticket_id.slice(0, 8).toUpperCase()}</dd>
-                  </div>
-                </dl>
-              </div>
+                <div className="tk-stub-main">
+                  <p className="tk-stub-n">
+                    Ticket {index + 1} <span>of {count}</span>
+                  </p>
+                  <p className="tk-stub-title">{event.title}</p>
+                  <dl className="tk-stub-grid">
+                    <div>
+                      <dt>Doors</dt>
+                      <dd>{formatEventDate(event.starts_at)}</dd>
+                    </div>
+                    <div>
+                      <dt>Venue</dt>
+                      <dd>
+                        {event.venue_name}, {event.venue_city}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Seat</dt>
+                      <dd className="tk-mono">{ticket.seat_id.slice(0, 8).toUpperCase()}</dd>
+                    </div>
+                    <div>
+                      <dt>Ticket</dt>
+                      <dd className="tk-mono">{ticket.ticket_id.slice(0, 8).toUpperCase()}</dd>
+                    </div>
+                  </dl>
+                </div>
 
-              <div className="tk-perf" />
+                <div className="tk-perf" />
 
-              <div className="tk-qr">
-                <QRCode value={ticket.qr_token} size={128} />
-                <p>Scan at the gate</p>
+                <div className="tk-qr">
+                  <QRCode value={ticket.qr_token} size={128} />
+                  <p>Scan at the gate</p>
+                </div>
               </div>
             </li>
           ))}

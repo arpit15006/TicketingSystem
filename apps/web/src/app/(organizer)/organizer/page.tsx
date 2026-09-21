@@ -44,7 +44,7 @@ export default function OrganizerOverview() {
     .filter((e) => sales[e.event_id] != null)
     .map((e) => {
       const s = sales[e.event_id] as SalesSummary
-      return { name: e.title.length > 22 ? `${e.title.slice(0, 21)}…` : e.title, sold: s.sold, held: s.held, available: s.available }
+      return { name: e.title.length > 48 ? `${e.title.slice(0, 47)}…` : e.title, sold: s.sold, held: s.held, available: s.available }
     })
 
   return (
@@ -125,7 +125,7 @@ export default function OrganizerOverview() {
                 <TableRow>
                   <TableHead>Event</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Sales</TableHead>
+                  <TableHead className="w-full">Sales</TableHead>
                   <TableHead className="w-12" />
                 </TableRow>
               </TableHeader>

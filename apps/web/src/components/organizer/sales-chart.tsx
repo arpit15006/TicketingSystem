@@ -21,7 +21,9 @@ export function SalesChart({ data }: { data: SalesPoint[] }) {
     <ChartContainer config={config} className="h-64 w-full">
       <BarChart data={data} layout="vertical" margin={{ left: 8, right: 8 }}>
         <CartesianGrid horizontal={false} />
-        <YAxis dataKey="name" type="category" width={140} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+        {/* `width="auto"` measures the tick labels and claims the slack the plot was not using,
+            so event titles read in full instead of being clipped at a fixed 140px gutter. */}
+        <YAxis dataKey="name" type="category" width="auto" tickMargin={8} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
         <XAxis type="number" hide />
         <ChartTooltip content={<ChartTooltipContent />} />
         <ChartLegend content={<ChartLegendContent />} />

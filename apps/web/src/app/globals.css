@@ -336,23 +336,29 @@
   }
 
   .tk-stubs {
-    margin-top: 5mm;
+    margin-top: 2mm;
     display: flex;
     flex-direction: column;
-    gap: 4mm;
     list-style: none;
     padding: 0;
   }
 
+  /* The space between stubs is the stub's own padding rather than a flex gap:
+     a margin or gap at a page break is truncated to zero, and the first stub on
+     a continuation page would start flush against the cut edge of the paper. */
   .tk-stub {
+    padding-top: 5mm;
+    /* A stub split across two sheets is a stub nobody can scan. */
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .tk-stub-card {
     display: flex;
     align-items: stretch;
     overflow: hidden;
     border: 0.35mm solid #d8d8e2;
     border-radius: 3mm;
-    /* A stub split across two sheets is a stub nobody can scan. */
-    break-inside: avoid;
-    page-break-inside: avoid;
   }
 
   .tk-rail {

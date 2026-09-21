@@ -39,20 +39,35 @@ export function SeatmapViewport({
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (e.button !== 0) return
+    /*
+     * NO pointer capture here.
+     *
+     * Capturing on pointerdown retargets every later pointer event to this
+     * container, so the browser fires `click` on the container instead of the
+     * seat under the cursor — and selecting a seat with a real mouse silently
+     * stopped working. Capture is only needed once a drag is actually under
+     * way, so it is taken in pointermove below.
+     */
     drag.current = { startX: e.clientX, startY: e.clientY, originX: view.x, originY: view.y, moved: false }
-    e.currentTarget.setPointerCapture(e.pointerId)
   }
-  const onPointerMove = (e: React.PointerEvent): void => {
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     const d = drag.current
     if (d === null) return
     const dx = e.clientX - d.startX
     const dy = e.clientY - d.startY
-    if (!d.moved && Math.hypot(dx, dy) < 5) return
-    d.moved = true
+    if (!d.moved) {
+      if (Math.hypot(dx, dy) < 5) return
+      d.moved = true
+      // Now it is a drag: hold the pointer so panning survives leaving the box.
+      e.currentTarget.setPointerCapture(e.pointerId)
+    }
     setView((v) => ({ ...v, x: d.originX + dx, y: d.originY + dy }))
   }
-  const onPointerUp = (): void => {
-    if (drag.current?.moved) swallowClick.current = true
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (drag.current?.moved === true) {
+      swallowClick.current = true
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    }
     drag.current = null
   }
   const onClickCapture = (e: React.MouseEvent): void => {

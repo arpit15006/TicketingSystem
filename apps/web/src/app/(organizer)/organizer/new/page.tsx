@@ -7,11 +7,12 @@ import { useFieldArray, useForm, Controller } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { toast } from "sonner"
-import { CalendarIcon, CheckIcon, CircleIcon, LoaderCircleIcon, PlusIcon, Trash2Icon } from "lucide-react"
+import { CalendarIcon, CheckIcon, LoaderCircleIcon, PlusIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Calendar } from "@/components/ui/calendar"
@@ -241,7 +242,7 @@ export default function NewEventPage() {
                     render={({ field }) => (
                       <Popover>
                         <PopoverTrigger asChild>
-                          <Button type="button" variant="outline" className="justify-start font-normal">
+                          <Button type="button" variant="outline" className="justify-start">
                             <CalendarIcon className="size-4" />
                             {field.value ? formatShortDate(field.value.toISOString()) : "Pick a date"}
                           </Button>
@@ -283,16 +284,18 @@ export default function NewEventPage() {
           <CardContent>
             <FieldGroup>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field orientation="horizontal">
-                  <Controller
-                    control={form.control}
-                    name="waitingRoom"
-                    render={({ field }) => <Switch id="wr" checked={field.value} onCheckedChange={field.onChange} />}
-                  />
-                  <div className="flex flex-col">
-                    <FieldLabel htmlFor="wr">Waiting room</FieldLabel>
-                    <FieldDescription>Admit buyers in batches for high-demand sales.</FieldDescription>
+                <Field>
+                  <FieldLabel htmlFor="wr">Waiting room</FieldLabel>
+                  {/* The switch sits in a select-height box so it shares the row band
+                      with "Hold window" beside it — label, control and hint all line up. */}
+                  <div className="flex h-8 items-center">
+                    <Controller
+                      control={form.control}
+                      name="waitingRoom"
+                      render={({ field }) => <Switch id="wr" checked={field.value} onCheckedChange={field.onChange} />}
+                    />
                   </div>
+                  <FieldDescription>Admit buyers in batches for high-demand sales.</FieldDescription>
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="hold">Hold window</FieldLabel>
@@ -348,17 +351,31 @@ export default function NewEventPage() {
             <CardDescription>Every section belongs to exactly one tier.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            {/* Headers for sighted readers; every control below carries its own
+                aria-label, so repeating the column name to a screen reader would
+                only double it. */}
+            <div aria-hidden="true" className="grid grid-cols-[1fr_140px_auto] gap-2 text-xs font-medium text-muted-foreground">
+              <span>Tier name</span>
+              <span>Price</span>
+              <span className="w-8" />
+            </div>
             {tiers.fields.map((f, i) => (
               <div key={f.id} className="grid grid-cols-[1fr_140px_auto] items-start gap-2">
                 <Field>
-                  <Input placeholder="Tier name" {...form.register(`tiers.${i}.name`)} />
+                  <Input aria-label={`Tier ${i + 1} name`} placeholder="Tier name" {...form.register(`tiers.${i}.name`)} />
                   <FieldError errors={[form.formState.errors.tiers?.[i]?.name]} />
                 </Field>
                 <Field>
-                  <div className="relative">
-                    <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-muted-foreground">₹</span>
-                    <Input type="number" min={0} step={1} className="pl-7" {...form.register(`tiers.${i}.priceRupees`)} />
-                  </div>
+                  <InputGroup>
+                    <InputGroupAddon align="inline-start">₹</InputGroupAddon>
+                    <InputGroupInput
+                      type="number"
+                      min={0}
+                      step={1}
+                      aria-label={`Tier ${i + 1} price in rupees`}
+                      {...form.register(`tiers.${i}.priceRupees`)}
+                    />
+                  </InputGroup>
                   <FieldError errors={[form.formState.errors.tiers?.[i]?.priceRupees]} />
                 </Field>
                 <Button type="button" variant="ghost" size="icon" aria-label="Remove tier" disabled={tiers.fields.length === 1} onClick={() => tiers.remove(i)}>
@@ -366,7 +383,7 @@ export default function NewEventPage() {
                 </Button>
               </div>
             ))}
-            <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => tiers.append({ name: "", priceRupees: 0 })}>
+            <Button type="button" variant="outline" className="w-fit" onClick={() => tiers.append({ name: "", priceRupees: 0 })}>
               <PlusIcon className="size-4" />
               Add tier
             </Button>
@@ -382,27 +399,34 @@ export default function NewEventPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            <div aria-hidden="true" className="grid grid-cols-[1fr_1fr_90px_90px_auto] gap-2 text-xs font-medium text-muted-foreground">
+              <span>Section</span>
+              <span>Tier</span>
+              <span>Rows</span>
+              <span>Seats/row</span>
+              <span className="w-8" />
+            </div>
             {sections.fields.map((f, i) => (
               <div key={f.id} className="grid grid-cols-[1fr_1fr_90px_90px_auto] items-start gap-2">
                 <Field>
-                  <Input placeholder="Section" {...form.register(`sections.${i}.name`)} />
+                  <Input aria-label={`Section ${i + 1} name`} placeholder="Section" {...form.register(`sections.${i}.name`)} />
                   <FieldError errors={[form.formState.errors.sections?.[i]?.name]} />
                 </Field>
-                <NativeSelect {...form.register(`sections.${i}.tierIndex`)}>
+                <NativeSelect aria-label={`Section ${i + 1} tier`} {...form.register(`sections.${i}.tierIndex`)}>
                   {watchedTiers.map((t, ti) => (
                     <NativeSelectOption key={ti} value={String(ti)}>
                       {t.name || `Tier ${ti + 1}`}
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
-                <Input type="number" min={1} max={500} placeholder="Rows" {...form.register(`sections.${i}.rows`)} />
-                <Input type="number" min={1} max={500} placeholder="Seats" {...form.register(`sections.${i}.seatsPerRow`)} />
+                <Input type="number" min={1} max={500} aria-label={`Section ${i + 1} rows`} placeholder="Rows" {...form.register(`sections.${i}.rows`)} />
+                <Input type="number" min={1} max={500} aria-label={`Section ${i + 1} seats per row`} placeholder="Seats" {...form.register(`sections.${i}.seatsPerRow`)} />
                 <Button type="button" variant="ghost" size="icon" aria-label="Remove section" disabled={sections.fields.length === 1} onClick={() => sections.remove(i)}>
                   <Trash2Icon className="size-4" />
                 </Button>
               </div>
             ))}
-            <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => sections.append({ name: "", tierIndex: 0, rows: 10, seatsPerRow: 20 })}>
+            <Button type="button" variant="outline" className="w-fit" onClick={() => sections.append({ name: "", tierIndex: 0, rows: 10, seatsPerRow: 20 })}>
               <PlusIcon className="size-4" />
               Add section
             </Button>
@@ -420,11 +444,16 @@ export default function NewEventPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">What happens</CardTitle>
-            <CardDescription>Each step is its own call to the service that owns it.</CardDescription>
+            <CardDescription>
+              Each step is its own call to the service that owns it. Nothing runs until you press
+              Create event.
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {steps !== null && <Progress value={(doneCount / steps.length) * 100} />}
-            <ol className="flex flex-col gap-2 text-sm">
+            {steps !== null && (
+              <Progress aria-label="Creation progress" value={(doneCount / steps.length) * 100} />
+            )}
+            <ol aria-live="polite" className="flex flex-col gap-2 text-sm">
               {(steps ?? [
                 { label: "Create the event", state: "todo" as const },
                 { label: "Pick up the organizer grant", state: "todo" as const },
@@ -433,17 +462,30 @@ export default function NewEventPage() {
                 { label: "Publish / put on sale", state: "todo" as const },
                 { label: "Provision seats", state: "todo" as const },
               ]).map((s, i) => (
-                <li key={i} className="flex items-center gap-2">
+                <li key={i} aria-current={s.state === "doing" ? "step" : undefined} className="flex items-center gap-2">
+                  {/* A step not started yet shows its number. An empty circle here
+                      read as an unticked checkbox — something to click, rather than
+                      work the server is about to do. */}
                   {s.state === "done" ? (
                     <CheckIcon className="size-4 text-emerald-500" />
                   ) : s.state === "doing" ? (
                     <LoaderCircleIcon className="size-4 animate-spin" />
                   ) : s.state === "failed" ? (
-                    <CircleIcon className="size-4 fill-destructive text-destructive" />
+                    <TriangleAlertIcon className="size-4 text-destructive" />
                   ) : (
-                    <CircleIcon className="size-4 text-muted-foreground/40" />
+                    <span className="size-4 text-center text-xs leading-4 font-medium tabular-nums text-muted-foreground">
+                      {i + 1}
+                    </span>
                   )}
-                  <span className={s.state === "todo" ? "text-muted-foreground" : ""}>{s.label}</span>
+                  <span className={s.state === "todo" ? "text-muted-foreground" : ""}>
+                    {s.label}
+                    {/* State is carried by icon and colour alone otherwise. */}
+                    {s.state !== "todo" && (
+                      <span className="sr-only">
+                        {s.state === "done" ? " — done" : s.state === "doing" ? " — in progress" : " — failed"}
+                      </span>
+                    )}
+                  </span>
                 </li>
               ))}
             </ol>

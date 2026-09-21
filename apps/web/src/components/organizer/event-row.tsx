@@ -90,10 +90,14 @@ export function EventRow({ event, onSales }: { event: EventSummary; onSales: (id
     onError: (e) => toast.error(e instanceof Error ? e.message : "Could not provision seats"),
   })
 
-  const soldPct = sales.data !== undefined && sales.data.total > 0 ? (sales.data.sold / sales.data.total) * 100 : 0
+  const soldRatio = sales.data !== undefined && sales.data.total > 0 ? sales.data.sold / sales.data.total : 0
+  // A single seat sold out of thousands is a sub-pixel sliver, which is what made
+  // the bar look decorative. Floor the mark so "some" never renders as "none";
+  // the exact counts are printed directly above it.
+  const soldPct = soldRatio > 0 ? Math.max(2, soldRatio * 100) : 0
 
   return (
-    <TableRow>
+    <TableRow className="focus-within:bg-muted/50">
       <TableCell>
         <div className="flex flex-col">
           <Link href={`/organizer/events/${event.event_id}`} className="font-medium hover:underline">
@@ -125,14 +129,18 @@ export function EventRow({ event, onSales }: { event: EventSummary; onSales: (id
               </span>
               <span className="text-muted-foreground">{sales.data.held} held</span>
             </div>
-            <Progress value={soldPct} className="h-1.5" />
+            <Progress
+              value={soldPct}
+              className="h-2"
+              aria-label={`${sales.data.sold.toLocaleString("en-IN")} of ${sales.data.total.toLocaleString("en-IN")} seats sold`}
+            />
           </div>
         ) : null}
       </TableCell>
       <TableCell className="text-right">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="Actions">
+            <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${event.title}`}>
               <MoreHorizontalIcon className="size-4" />
             </Button>
           </DropdownMenuTrigger>
