@@ -48,7 +48,7 @@ export function SearchCommand() {
       <Button
         variant="outline"
         size="sm"
-        className="hidden w-56 justify-between text-muted-foreground md:flex"
+        className="hidden w-56 justify-between md:flex"
         onClick={() => setOpen(true)}
       >
         <span className="flex items-center gap-2">
@@ -60,7 +60,7 @@ export function SearchCommand() {
           <Kbd>K</Kbd>
         </KbdGroup>
       </Button>
-      <Button variant="ghost" size="icon" className="md:hidden" aria-label="Search" onClick={() => setOpen(true)}>
+      <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Search" onClick={() => setOpen(true)}>
         <SearchIcon className="size-4" />
       </Button>
 

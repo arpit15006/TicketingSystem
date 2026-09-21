@@ -48,10 +48,6 @@ function CommandDialog({
 }) {
   return (
     <Dialog {...props}>
-      <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
-      </DialogHeader>
       <DialogContent
         className={cn(
           "top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0",
@@ -59,6 +55,19 @@ function CommandDialog({
         )}
         showCloseButton={showCloseButton}
       >
+        {/*
+          INSIDE DialogContent, not beside it.
+          Radix unmounts DialogContent when the dialog is closed, but a sibling is
+          not unmounted with it — so the generated version left this <h2> in the
+          document permanently. On the home page that put "Search events, heading
+          level 2" ahead of the page's own <h1> in the outline, for a dialog that
+          was not even open. Inside, it mounts and unmounts with the dialog, and it
+          is where Radix documents the title belongs for aria-labelledby.
+        */}
+        <DialogHeader className="sr-only">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
         {children}
       </DialogContent>
     </Dialog>

@@ -189,7 +189,7 @@ export function SiteHeader() {
           {/* Mobile: everything else lives in a sheet. */}
           <Sheet>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="md:hidden" aria-label="Menu">
+              <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Menu">
                 <MenuIcon className="size-5" />
               </Button>
             </SheetTrigger>

@@ -19,6 +19,26 @@ import type { EventSummary } from "@/lib/api-types"
 
 const CATEGORIES: Category[] = ["music", "comedy", "sports", "theatre", "festival"]
 
+/**
+ * Controls that sit on the hero's photographic gradient.
+ *
+ * Theme tokens carry no contrast guarantee against an image, so this is the one
+ * place the app states colours literally — and it is a constant rather than two
+ * inline overrides so the hero's CTA and its carousel arrows read as one family.
+ */
+const ON_MEDIA = "border-white/30 bg-white/15 text-white backdrop-blur hover:bg-white/25 hover:text-white"
+
+/**
+ * The hero's primary action. Solid, because a translucent primary CTA is a
+ * contradiction — issue #5 is that booking should be the most prominent thing on
+ * a card, and the hero's version must not undercut it. White rather than a theme
+ * token because the backdrop is an arbitrary gradient.
+ */
+const ON_MEDIA_PRIMARY = "bg-white text-neutral-900 hover:bg-white/90"
+
+/** A rail is a way through *many* items; below this it is just a short row. */
+const MIN_RAIL_ITEMS = 3
+
 export default function HomePage() {
   const { data, isLoading, error } = useEvents()
   const [category, setCategory] = React.useState<Category | "all">("all")
@@ -59,37 +79,59 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-col gap-10">
+      {/*
+        The page's own heading. It is visually hidden because the design leads
+        with the carousel, but the outline must still start at h1 — without it the
+        first heading a screen reader met was a promotional banner, and the
+        listing heading below had been promoted to h1 halfway down the page.
+      */}
+      <h1 className="sr-only">Events{city === ALL_CITIES ? "" : ` in ${city}`}</h1>
+
       {/* ── hero ─────────────────────────────────────────────────────────── */}
       {isLoading ? (
-        <Skeleton className="h-72 w-full rounded-2xl" />
+        <Skeleton className="h-72 w-full rounded-xl" />
       ) : featured.length > 0 ? (
-        <Carousel opts={{ loop: true }} className="w-full">
-          <CarouselContent>
-            {featured.map((event) => (
-              <CarouselItem key={event.event_id}>
-                <FeaturedBanner event={event} />
-              </CarouselItem>
-            ))}
-          </CarouselContent>
-          <CarouselPrevious className="left-3" />
-          <CarouselNext className="right-3" />
-        </Carousel>
+        <section aria-labelledby="featured-heading">
+          <h2 id="featured-heading" className="sr-only">
+            Featured events
+          </h2>
+          <Carousel opts={{ loop: true }} className="w-full">
+            <CarouselContent>
+              {featured.map((event) => (
+                <CarouselItem key={event.event_id}>
+                  <FeaturedBanner event={event} />
+                </CarouselItem>
+              ))}
+            </CarouselContent>
+            {/*
+              Anchored as a pair to the banner's bottom-right corner. Vertically
+              centred at the left edge — where they were — put the previous arrow
+              on top of the banner's own headline and CTA, which sit bottom-left.
+            */}
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-end justify-end p-4 md:p-6">
+              <div className="pointer-events-auto flex gap-2">
+                <CarouselPrevious className={`static ${ON_MEDIA}`} />
+                <CarouselNext className={`static ${ON_MEDIA}`} />
+              </div>
+            </div>
+          </Carousel>
+        </section>
       ) : null}
 
       {/* ── rails ────────────────────────────────────────────────────────── */}
-      {!isLoading && category === "all" && thisWeek.length > 0 && (
+      {!isLoading && category === "all" && thisWeek.length >= MIN_RAIL_ITEMS && (
         <Rail icon={<CalendarDaysIcon />} title="This week" subtitle="Starting in the next seven days" events={thisWeek} />
       )}
-      {!isLoading && category === "all" && highDemand.length > 0 && (
+      {!isLoading && category === "all" && highDemand.length >= MIN_RAIL_ITEMS && (
         <Rail icon={<FlameIcon />} title="High demand" subtitle="Waiting room in effect — join early" events={highDemand} />
       )}
 
       {/* ── filters ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h2 className="text-2xl font-semibold tracking-tight">
             What&apos;s on{city === ALL_CITIES ? "" : ` in ${city}`}
-          </h1>
+          </h2>
           <p className="text-sm text-muted-foreground">
             {events.length} event{events.length === 1 ? "" : "s"} · seats held while you pay, never oversold.
           </p>
@@ -182,24 +224,21 @@ function CategoryChip({
   onClick: () => void
   children: React.ReactNode
 }) {
+  /*
+   * The shared Button, not a bespoke one. Hand-rolled chips were two more button
+   * styles on a page that already had enough, and — worse — they announced no
+   * state at all: `aria-pressed` is what tells a screen reader which filter is on.
+   */
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        active
-          ? "rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background"
-          : "rounded-full border px-4 py-1.5 text-sm text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
-      }
-    >
+    <Button type="button" variant={active ? "default" : "outline"} size="sm" aria-pressed={active} onClick={onClick}>
       {children}
-    </button>
+    </Button>
   )
 }
 
 function FeaturedBanner({ event }: { event: EventSummary }) {
   return (
-    <div className="relative h-72 overflow-hidden rounded-2xl md:h-80">
+    <div className="relative h-72 overflow-hidden rounded-xl md:h-80">
       <EventPoster event={event} className="absolute inset-0" />
       <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/40 to-transparent" />
       <div className="relative flex h-full max-w-2xl flex-col justify-end gap-3 p-6 text-white md:p-10">
@@ -212,15 +251,16 @@ function FeaturedBanner({ event }: { event: EventSummary }) {
             {CATEGORY_LABEL[categoryOf(event.title)]}
           </Badge>
         </div>
-        <h2 className="text-3xl leading-tight font-bold tracking-tight md:text-4xl">{event.title}</h2>
+        <h3 className="text-3xl leading-tight font-bold tracking-tight md:text-4xl">{event.title}</h3>
         <p className="text-sm text-white/80">
           {formatEventDate(event.starts_at)} · {event.venue_name}, {event.venue_city}
           {event.min_price_paise !== null && ` · from ${formatPaise(event.min_price_paise)}`}
         </p>
-        <Button size="lg" className="w-fit bg-white text-black hover:bg-white/90" asChild>
+        {/* One booking verb across the site: the cards say "Book now" too. */}
+        <Button size="lg" className={`w-fit ${ON_MEDIA_PRIMARY}`} asChild>
           <Link href={`/events/${event.event_id}`}>
-            Book tickets
-            <ArrowRightIcon className="size-4" />
+            Book now
+            <ArrowRightIcon className="size-4" aria-hidden />
           </Link>
         </Button>
       </div>

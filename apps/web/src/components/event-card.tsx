@@ -73,7 +73,7 @@ export function EventCard({ event }: { event: EventSummary }) {
             {event.venue_name}, {event.venue_city}
           </span>
         </p>
-        <div className="mt-auto flex items-center justify-between pt-2">
+        <div className="mt-auto flex items-center justify-between gap-2 pt-2">
           {event.min_price_paise !== null ? (
             <span className="text-sm">
               <span className="text-muted-foreground">from </span>
@@ -82,8 +82,22 @@ export function EventCard({ event }: { event: EventSummary }) {
           ) : (
             <span className="text-sm text-muted-foreground">Pricing soon</span>
           )}
-          <span className="text-xs font-medium text-primary">
-            {onsale ? "Book now →" : "Details →"}
+          {/*
+            The card's primary action, given the weight of one — but still a
+            <span>. The whole card is already the link; nesting a button or a
+            second anchor inside it would put an interactive element inside an
+            interactive element, which is invalid and gives keyboard and screen
+            reader users two targets for one destination.
+          */}
+          <span
+            className={cn(
+              "shrink-0 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
+              onsale
+                ? "bg-primary text-primary-foreground group-hover:bg-primary/90"
+                : "bg-muted text-muted-foreground"
+            )}
+          >
+            {onsale ? "Book now" : "Details"}
           </span>
         </div>
       </div>

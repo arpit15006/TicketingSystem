@@ -56,7 +56,7 @@ export function NotificationsBell() {
   return (
     <DropdownMenu onOpenChange={(open) => open && markSeen()}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative" aria-label={`Notifications${unread > 0 ? `, ${unread} unread` : ""}`}>
+        <Button variant="ghost" size="icon-sm" className="relative" aria-label={`Notifications${unread > 0 ? `, ${unread} unread` : ""}`}>
           <BellIcon className="size-4" />
           {unread > 0 && (
             <Badge className="absolute -top-1 -right-1 h-4 min-w-4 px-1 text-[10px]">{unread}</Badge>
