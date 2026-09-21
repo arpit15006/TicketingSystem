@@ -64,7 +64,16 @@ export default function BookingsPage() {
   const past = orders.filter((o) => !upcoming.includes(o) && !pending.includes(o))
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
+    /*
+     * Full content width, not max-w-3xl.
+     * Header, main and footer all share one container and one centre, so a
+     * narrow column is concentric rather than offset — but it still ended 176px
+     * inside the footer on each side, which is what read as disjointed. A
+     * narrow measure is right for prose and forms (an order, the account page);
+     * a list of bookings has no such argument, so it uses the page width the
+     * header and footer already use, and pairs up on wide screens.
+     */
+    <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
           <TicketsIcon className="size-6" />
@@ -115,9 +124,9 @@ export default function BookingsPage() {
               ["past", past, "Nothing here."],
             ] as const
           ).map(([value, list, empty]) => (
-            <TabsContent key={value} value={value} className="flex flex-col gap-4">
+            <TabsContent key={value} value={value} className="mt-4 grid gap-4 xl:grid-cols-2">
               {list.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">{empty}</p>
+                <p className="py-8 text-center text-sm text-muted-foreground xl:col-span-2">{empty}</p>
               ) : (
                 list.map((order) => <BookingCard key={order.orderId} order={order} event={eventsById.get(order.eventId)} />)
               )}
@@ -147,10 +156,17 @@ function BookingCard({ order, event }: { order: OrderSummary; event: EventSummar
 
         <div className="flex min-w-0 flex-1 flex-col gap-2 p-4">
           <div className="flex items-start justify-between gap-3">
-            <h3 className="line-clamp-2 leading-snug font-semibold">{event?.title ?? "Event"}</h3>
-            <Badge variant={label.variant} className="shrink-0">
-              {label.text}
-            </Badge>
+            {/* h2, not h3: the page h1 is the only heading above these, so an
+                h3 skipped a level. */}
+            <h2 className="line-clamp-2 leading-snug font-semibold">{event?.title ?? "Event"}</h2>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {confirmed && order.scannedCount > 0 && (
+                <Badge variant="secondary">
+                  {order.scannedCount}/{order.ticketCount} used
+                </Badge>
+              )}
+              <Badge variant={label.variant}>{label.text}</Badge>
+            </div>
           </div>
 
           {event !== undefined && (
@@ -173,11 +189,17 @@ function BookingCard({ order, event }: { order: OrderSummary; event: EventSummar
               {order.seatCount} seat{order.seatCount === 1 ? "" : "s"} · {formatPaise(order.amountPaise)} · booked{" "}
               {formatShortDate(order.createdAt)}
             </span>
+            {/*
+              The action label always says what the card does. It used to be
+              replaced by "1/3 used" once a ticket had been scanned, which hid
+              the only signifier that the card opens anything — the status is a
+              badge beside it now, where status belongs.
+            */}
             <span className="flex shrink-0 items-center gap-1 font-medium text-primary">
               {confirmed ? (
                 <>
                   <QrCodeIcon className="size-4" />
-                  {order.scannedCount > 0 ? `${order.scannedCount}/${order.ticketCount} used` : "View QR"}
+                  View QR
                 </>
               ) : order.status === "awaiting_payment" ? (
                 "Complete payment"

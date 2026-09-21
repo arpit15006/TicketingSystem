@@ -120,7 +120,7 @@ export function SiteHeader() {
           <CityPicker />
         </div>
 
-        <nav className="ml-auto hidden items-center gap-1 md:flex">
+        <nav className="ml-auto hidden items-center gap-2 md:flex lg:gap-3">
           <SearchCommand />
           {links.map((l) => (
             <Button key={l.href} variant="ghost" size="sm" asChild>
@@ -144,8 +144,8 @@ export function SiteHeader() {
           ) : isAuthenticated && user !== null ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="rounded-full" aria-label="Account">
-                  <Avatar className="size-8">
+                <Button variant="ghost" size="icon-sm" aria-label="Account">
+                  <Avatar className="size-7">
                     <AvatarFallback className="text-xs">{initials(user.fullName)}</AvatarFallback>
                   </Avatar>
                 </Button>

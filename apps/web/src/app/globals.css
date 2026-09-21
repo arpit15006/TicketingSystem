@@ -129,3 +129,380 @@
     @apply font-sans;
   }
 }
+/* ── the printed ticket ───────────────────────────────────────────────────────
+ *
+ * A sheet that exists only on paper. It is hidden on screen, and in print it is
+ * the only thing on the page — the app chrome is already `print:hidden`, and the
+ * order page hides its own screen layout.
+ *
+ * Written in plain CSS with literal colours rather than theme tokens: the tokens
+ * follow dark mode, and a ticket printed at 1am should not come out as white ink
+ * on a black rectangle. `print-color-adjust: exact` is what keeps the hero band
+ * and the QR quiet zones from being optimised away by the print pipeline — the
+ * reason the old output had a grey, unreadable title.
+ */
+.tk-sheet {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4;
+    /* Zero margin gives the hero its full bleed, and takes the browser's own
+       date/URL running heads out of the margin box with it. The sheet supplies
+       its own padding below. */
+    margin: 0;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* The app shell is laid out for a 1280px viewport; on paper it is just an
+     indent in front of the ticket. */
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .tk-sheet {
+    display: block;
+    color: #12121a;
+    font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .tk-sheet * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ── hero ─────────────────────────────────────────────────────────────── */
+
+  .tk-hero {
+    position: relative;
+    overflow: hidden;
+    padding: 12mm 14mm 10mm;
+    color: #fff;
+  }
+
+  /* The same darkening the on-screen poster uses, so a pale gradient never
+     leaves the title fighting its own background. */
+  .tk-hero::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top, rgb(0 0 0 / 0.45), transparent 70%);
+  }
+
+  .tk-hero > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .tk-hero-mono {
+    position: absolute;
+    top: -14mm;
+    right: -4mm;
+    z-index: 0;
+    font-size: 62mm;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: -0.06em;
+    color: rgb(255 255 255 / 0.13);
+  }
+
+  .tk-hero-top {
+    display: flex;
+    align-items: center;
+    gap: 3mm;
+    margin-bottom: 7mm;
+  }
+
+  .tk-brand {
+    font-size: 3.1mm;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+
+  .tk-chip {
+    padding: 0.9mm 2.6mm;
+    border: 0.3mm solid rgb(255 255 255 / 0.5);
+    border-radius: 999px;
+    font-size: 2.7mm;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .tk-title {
+    max-width: 150mm;
+    font-size: 11.5mm;
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+  }
+
+  .tk-meta {
+    display: flex;
+    align-items: center;
+    gap: 3mm;
+    margin-top: 4mm;
+    font-size: 3.6mm;
+    color: rgb(255 255 255 / 0.92);
+  }
+
+  .tk-dot {
+    width: 1.1mm;
+    height: 1.1mm;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 0.6);
+  }
+
+  /* ── the stat strip, with the ticket notch either side ────────────────── */
+
+  .tk-strip {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6mm;
+    padding: 5mm 14mm;
+    background: #12121a;
+    color: #fff;
+  }
+
+  .tk-strip::before,
+  .tk-strip::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 7mm;
+    height: 7mm;
+    border-radius: 999px;
+    background: #fff;
+    transform: translateY(-50%);
+  }
+
+  .tk-strip::before {
+    left: -3.5mm;
+  }
+
+  .tk-strip::after {
+    right: -3.5mm;
+  }
+
+  .tk-strip dt {
+    font-size: 2.6mm;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgb(255 255 255 / 0.55);
+  }
+
+  .tk-strip dd {
+    margin-top: 1.2mm;
+    font-size: 4.6mm;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── the stubs ────────────────────────────────────────────────────────── */
+
+  .tk-body {
+    padding: 8mm 14mm 0;
+  }
+
+  .tk-h2 {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6mm;
+    padding-bottom: 3mm;
+    border-bottom: 0.3mm solid #e2e2e8;
+    font-size: 4.4mm;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .tk-h2-note {
+    font-size: 3mm;
+    font-weight: 500;
+    color: #6b6b7b;
+  }
+
+  .tk-stubs {
+    margin-top: 5mm;
+    display: flex;
+    flex-direction: column;
+    gap: 4mm;
+    list-style: none;
+    padding: 0;
+  }
+
+  .tk-stub {
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;
+    border: 0.35mm solid #d8d8e2;
+    border-radius: 3mm;
+    /* A stub split across two sheets is a stub nobody can scan. */
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .tk-rail {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 2mm;
+    background: #12121a;
+    color: #fff;
+  }
+
+  .tk-rail span {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-size: 2.7mm;
+    font-weight: 700;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+  }
+
+  .tk-stub-main {
+    flex: 1;
+    min-width: 0;
+    padding: 5mm 7mm;
+  }
+
+  .tk-stub-n {
+    font-size: 3mm;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #12121a;
+  }
+
+  .tk-stub-n span {
+    font-weight: 500;
+    color: #8a8a9a;
+  }
+
+  .tk-stub-title {
+    margin-top: 1.5mm;
+    font-size: 5.2mm;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+  }
+
+  .tk-stub-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2.5mm 6mm;
+    margin-top: 3.5mm;
+  }
+
+  .tk-stub-grid dt {
+    font-size: 2.5mm;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #8a8a9a;
+  }
+
+  .tk-stub-grid dd {
+    margin-top: 0.8mm;
+    font-size: 3.3mm;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  /* The tear line, drawn with a notch at each end so it reads as perforation
+     rather than as a table rule. */
+  .tk-perf {
+    position: relative;
+    width: 0;
+    border-left: 0.35mm dashed #c8c8d4;
+  }
+
+  .tk-perf::before,
+  .tk-perf::after {
+    content: "";
+    position: absolute;
+    left: -2mm;
+    width: 4mm;
+    height: 4mm;
+    border: 0.35mm solid #d8d8e2;
+    border-radius: 999px;
+    background: #fff;
+  }
+
+  .tk-perf::before {
+    top: -2mm;
+  }
+
+  .tk-perf::after {
+    bottom: -2mm;
+  }
+
+  .tk-qr {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2.5mm;
+    padding: 5mm 6mm;
+    background: #fff;
+  }
+
+  /* react-qr-code sizes itself in px; on paper it needs a scannable module
+     size and a white quiet zone around it, not a tight crop. */
+  .tk-qr svg {
+    width: 29mm;
+    height: 29mm;
+    shape-rendering: crispEdges;
+  }
+
+  .tk-qr p {
+    font-size: 2.6mm;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #8a8a9a;
+  }
+
+  .tk-mono {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    letter-spacing: 0.02em;
+  }
+
+  .tk-foot {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 8mm;
+    margin-top: 5mm;
+    padding: 4mm 0 8mm;
+    border-top: 0.3mm solid #e2e2e8;
+    font-size: 2.8mm;
+    line-height: 1.5;
+    color: #6b6b7b;
+  }
+
+  .tk-foot p:first-child {
+    max-width: 118mm;
+  }
+
+  /* The full order id is the one string support will ask for — it stays on one
+     line, unbroken, even though it is long. */
+  .tk-foot .tk-mono {
+    flex: none;
+    font-size: 2.6mm;
+    white-space: nowrap;
+  }
+}
