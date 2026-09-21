@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance, type RawServerDefault } from 'fastify';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Logger } from 'pino';
@@ -17,6 +18,9 @@ export type GatewayServer = FastifyInstance<
   ServerResponse<IncomingMessage>,
   Logger
 >;
+
+/** Header the load generator presents to be exempted from the rate limit. */
+export const RATE_LIMIT_BYPASS_HEADER = 'x-ratelimit-bypass';
 
 export interface BuildServerOptions {
   config: Config;
@@ -78,11 +82,35 @@ export async function buildServer({ config }: BuildServerOptions): Promise<Gatew
    */
   const rateLimitRedis = config.redisUrl === '' ? null : createRedisClient({ url: config.redisUrl });
 
+  /**
+   * The one caller allowed to look like a thundering herd: the concurrency demo's
+   * load generator, which fires hundreds of simultaneous holds on purpose.
+   *
+   * It proves itself with a secret rather than an address. Behind the compose
+   * bridge the generator and every browser reach this service from one IP, so an
+   * IP allowlist would lift the limit for real users too — which is exactly the
+   * mistake this replaces: raising RATE_LIMIT_MAX globally to make the demo work.
+   *
+   * Unset means there is no bypass at all, and that is the default. Nothing here
+   * touches authorization; the limit is edge behaviour and protects no invariant
+   * (ADR-012, INV-7).
+   */
+  const bypassToken = config.rateLimitBypassToken;
+  const presentsBypassToken = (header: string | string[] | undefined): boolean => {
+    if (bypassToken === '') return false;
+    const presented = Array.isArray(header) ? header[0] : header;
+    if (presented === undefined) return false;
+    const a = Buffer.from(presented.trim());
+    const b = Buffer.from(bypassToken);
+    return a.length === b.length && timingSafeEqual(a, b);
+  };
+
   await app.register(rateLimit, {
     max: config.rateLimitMax,
     timeWindow: config.rateLimitWindowMs,
     ...(rateLimitRedis === null ? {} : { redis: rateLimitRedis }),
     keyGenerator: (req) => req.ip,
+    allowList: (req) => presentsBypassToken(req.headers[RATE_LIMIT_BYPASS_HEADER]),
     /*
      * FAIL OPEN when the store errors.
      *

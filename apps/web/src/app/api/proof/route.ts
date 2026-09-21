@@ -16,6 +16,18 @@ import { NextResponse } from "next/server"
  */
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:3000"
+
+/**
+ * Lets this generator past the gateway's rate limit, which it is meant to
+ * exceed. Read here and nowhere else: it is deliberately not `NEXT_PUBLIC_`, so
+ * it stays on the server and the browser can never present it.
+ *
+ * Unset means the storm runs as ordinary traffic and may be throttled — which
+ * the page reports as "rate limited", not as a result.
+ */
+const BYPASS_TOKEN = process.env.RATE_LIMIT_BYPASS_TOKEN ?? ""
+const bypassHeader: Record<string, string> = BYPASS_TOKEN === "" ? {} : { "x-ratelimit-bypass": BYPASS_TOKEN }
+
 // The edge rate limit is 300/min per IP; this server is one IP.
 const MAX_REQUESTS = 300
 const MAX_SEATS = 100
@@ -60,7 +72,7 @@ export async function POST(request: Request): Promise<Response> {
   const seats = Math.max(1, Math.min(MAX_SEATS, requests, Number(body.seats) || 20))
   if (!/^[0-9a-f-]{36}$/.test(eventId)) return NextResponse.json({ error: "eventId required" }, { status: 400 })
 
-  const headers = { authorization, "content-type": "application/json" }
+  const headers = { authorization, "content-type": "application/json", ...bypassHeader }
 
   class RateLimited extends Error {
     constructor(readonly retryAfterSeconds: number | null) {
@@ -69,7 +81,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const availability = async (): Promise<number> => {
-    const r = await fetch(`${GATEWAY}/availability?eventId=${eventId}&limit=5000`)
+    const r = await fetch(`${GATEWAY}/availability?eventId=${eventId}&limit=5000`, { headers: bypassHeader })
     if (r.status === 429) throw new RateLimited(Number(r.headers.get("retry-after")) || null)
     if (!r.ok) throw new Error(`availability failed: ${r.status}`)
     return ((await r.json()) as { available: number }).available
@@ -93,7 +105,7 @@ export async function POST(request: Request): Promise<Response> {
     )
 
   /* ── the seats under contention ────────────────────────────────────── */
-  const free = await fetch(`${GATEWAY}/availability?eventId=${eventId}&limit=${seats}`)
+  const free = await fetch(`${GATEWAY}/availability?eventId=${eventId}&limit=${seats}`, { headers: bypassHeader })
   if (free.status === 429) return rateLimitedResponse(new RateLimited(Number(free.headers.get("retry-after")) || null))
   if (!free.ok) return NextResponse.json({ error: `availability failed: ${free.status}` }, { status: 502 })
   const targets = ((await free.json()) as { seats: { seat_id: string }[] }).seats.map((s) => s.seat_id)
@@ -157,7 +169,7 @@ export async function POST(request: Request): Promise<Response> {
     won.map((o) => async () => {
       // No content-type on a bodiless DELETE: Fastify rejects an empty JSON body
       // with 400, and the holds would sit until expiry.
-      const r = await fetch(`${GATEWAY}/reservations/${o.holdId}`, { method: "DELETE", headers: { authorization } })
+      const r = await fetch(`${GATEWAY}/reservations/${o.holdId}`, { method: "DELETE", headers: { authorization, ...bypassHeader } })
       return r.ok
     })
   )
@@ -166,7 +178,7 @@ export async function POST(request: Request): Promise<Response> {
   /* ── the service's own word ────────────────────────────────────────── */
   let metrics: Record<string, number> | null = null
   try {
-    const m = await fetch(`${GATEWAY}/metrics`)
+    const m = await fetch(`${GATEWAY}/metrics`, { headers: bypassHeader })
     if (m.ok) {
       metrics = {}
       for (const line of (await m.text()).split("\n")) {
@@ -198,6 +210,7 @@ export async function POST(request: Request): Promise<Response> {
     },
     wallMs,
     inFlightCap: MAX_IN_FLIGHT,
+    rateLimitExempt: BYPASS_TOKEN !== "",
     metrics,
     sampleRequestIds: outcomes.map((o) => o.requestId).filter((r): r is string => r !== undefined).slice(0, 3),
   })

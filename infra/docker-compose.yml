@@ -247,6 +247,8 @@ services:
       WAITING_ROOM_URL: http://waitingroom:3005
       NOTIFICATION_URL: http://notification:3006
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      # Empty unless set: no token, no bypass.
+      RATE_LIMIT_BYPASS_TOKEN: ${RATE_LIMIT_BYPASS_TOKEN:-}
       # PRD §13 — the browser origin allowed to reach the edge. apps/web runs on
       # 3007; the gateway owns 3000 and notification owns 3006.
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3007}

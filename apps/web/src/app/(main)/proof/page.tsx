@@ -35,6 +35,7 @@ interface Result {
   latencyMs: { p50: number; p95: number; p99: number; max: number }
   wallMs: number
   inFlightCap: number
+  rateLimitExempt: boolean
   metrics: Record<string, number> | null
   sampleRequestIds: string[]
 }
@@ -142,7 +143,10 @@ function Proof() {
             <Field>
               <FieldLabel>Requests: {requests}</FieldLabel>
               <Slider min={20} max={300} step={10} value={[requests]} onValueChange={(v) => setRequests(v[0] ?? 200)} />
-              <FieldDescription>Capped at 300. The gateway limits per IP per minute — locally the storefront&apos;s own polling counts against the same bucket.</FieldDescription>
+              <FieldDescription>
+                Capped at 300. The edge limits 300/min per IP; this generator is exempted by a server-side secret,
+                so ordinary browser traffic keeps the production limit.
+              </FieldDescription>
             </Field>
             <Field>
               <FieldLabel>Seats under contention: {Math.min(seats, requests)}</FieldLabel>
@@ -178,6 +182,7 @@ function Proof() {
                 <AlertDescription>
                   {result.requests} requests · {result.seats} seats · {result.wallMs} ms wall clock · up to{" "}
                   {result.inFlightCap} in flight
+                  {result.rateLimitExempt && " · generator exempted from the edge rate limit"}
                 </AlertDescription>
               </Alert>
 

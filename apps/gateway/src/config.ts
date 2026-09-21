@@ -37,6 +37,17 @@ export interface Config {
    */
   corsOrigins: string[];
   rateLimitMax: number;
+  /**
+   * Shared secret that exempts a caller from the rate limit, for a load
+   * generator that must be allowed to look like a thundering herd.
+   *
+   * EMPTY DISABLES IT ENTIRELY, which is the default and the production setting:
+   * with no token configured there is no bypass to present. It is a secret and
+   * not an IP allowlist on purpose — behind a bridge or a proxy the generator
+   * shares an address with ordinary browsers, so exempting the address would
+   * exempt them too.
+   */
+  rateLimitBypassToken: string;
   rateLimitWindowMs: number;
   logLevel: string;
   nodeEnv: string;
@@ -60,6 +71,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     // apps/web runs on 3007: the gateway owns 3000 and notification owns 3006.
     corsOrigins: list('CORS_ORIGINS', ['http://localhost:3007']),
     rateLimitMax: int('RATE_LIMIT_MAX', 300),
+    rateLimitBypassToken: process.env['RATE_LIMIT_BYPASS_TOKEN'] ?? '',
     rateLimitWindowMs: int('RATE_LIMIT_WINDOW_MS', 60_000),
     logLevel: process.env['LOG_LEVEL'] ?? 'info',
     nodeEnv: process.env['NODE_ENV'] ?? 'development',
