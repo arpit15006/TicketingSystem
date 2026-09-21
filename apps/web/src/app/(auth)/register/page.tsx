@@ -67,7 +67,7 @@ export default function RegisterPage() {
       </CardHeader>
 
       <form onSubmit={form.handleSubmit(onSubmit)} noValidate>
-        <CardContent>
+        <CardContent className="flex flex-col gap-6">
           {failure !== null && (
             <Alert variant="destructive" className="mb-6">
               <AlertTitle>{failure.message}</AlertTitle>
@@ -80,17 +80,16 @@ export default function RegisterPage() {
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="fullName">Full name</FieldLabel>
-              <Input id="fullName" autoComplete="name" {...form.register("fullName")} />
+              <Input size="lg" id="fullName" autoComplete="name" {...form.register("fullName")} />
               <FieldError errors={[form.formState.errors.fullName]} />
             </Field>
 
             <Field>
               <FieldLabel htmlFor="email">Email</FieldLabel>
-              <Input
+              <Input size="lg"
                 id="email"
                 type="email"
                 autoComplete="email"
-                placeholder="you@example.com"
                 {...form.register("email")}
               />
               <FieldError errors={[form.formState.errors.email]} />
@@ -98,7 +97,7 @@ export default function RegisterPage() {
 
             <Field>
               <FieldLabel htmlFor="password">Password</FieldLabel>
-              <Input
+              <Input size="lg"
                 id="password"
                 type="password"
                 autoComplete="new-password"
@@ -108,13 +107,13 @@ export default function RegisterPage() {
               <FieldError errors={[form.formState.errors.password]} />
             </Field>
           </FieldGroup>
-        </CardContent>
-
-        <CardFooter className="mt-6 flex-col gap-4">
-          <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
+          <Button type="submit" size="lg" className="w-full font-semibold" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting && <Spinner />}
             Create account
           </Button>
+        </CardContent>
+
+        <CardFooter className="mt-6">
           <p className="text-sm text-muted-foreground">
             Already have one?{" "}
             <Link href="/login" className="underline underline-offset-4">

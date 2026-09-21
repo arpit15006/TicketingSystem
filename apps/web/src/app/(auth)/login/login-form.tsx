@@ -62,7 +62,7 @@ export function LoginForm() {
       </CardHeader>
 
       <form onSubmit={form.handleSubmit(onSubmit)} noValidate>
-        <CardContent>
+        <CardContent className="flex flex-col gap-6">
           {failure !== null && (
             <Alert variant="destructive" className="mb-6">
               <AlertTitle>{failure.message}</AlertTitle>
@@ -76,11 +76,10 @@ export function LoginForm() {
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="email">Email</FieldLabel>
-              <Input
+              <Input size="lg"
                 id="email"
                 type="email"
                 autoComplete="email"
-                placeholder="you@example.com"
                 {...form.register("email")}
               />
               <FieldError errors={[form.formState.errors.email]} />
@@ -88,7 +87,7 @@ export function LoginForm() {
 
             <Field>
               <FieldLabel htmlFor="password">Password</FieldLabel>
-              <Input
+              <Input size="lg"
                 id="password"
                 type="password"
                 autoComplete="current-password"
@@ -97,13 +96,13 @@ export function LoginForm() {
               <FieldError errors={[form.formState.errors.password]} />
             </Field>
           </FieldGroup>
-        </CardContent>
-
-        <CardFooter className="mt-6 flex-col gap-4">
-          <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
+          <Button type="submit" size="lg" className="w-full font-semibold" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting && <Spinner />}
             Sign in
           </Button>
+        </CardContent>
+
+        <CardFooter className="mt-6">
           <p className="text-sm text-muted-foreground">
             No account?{" "}
             <Link href="/register" className="underline underline-offset-4">
