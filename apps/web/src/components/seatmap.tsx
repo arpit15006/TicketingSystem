@@ -327,7 +327,9 @@ export function Seatmap({
 }
 
 export function SeatmapLegend({ tiers }: { tiers: SeatTier[] }) {
-  const swatch = "inline-block size-3 rounded-[3px] border align-middle"
+  // `rounded-sm` (6px) is on the scale; the arbitrary 3px was a seventh radius
+  // on the page for four 12px squares.
+  const swatch = "inline-block size-3 rounded-sm border align-middle"
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
       {tiers.map((tier, index) => (

@@ -1,4 +1,5 @@
 import * as React from "react"
+import { Slot } from "radix-ui"
 import { cn } from "cn"
 
 function Card({
@@ -32,9 +33,19 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
+/**
+ * `asChild` so a card title can be a real heading where the page needs one.
+ * Without it a card's title is always a <div>, which is how the seat page ended
+ * up with no headings at all between its <h1> and the footer.
+ */
+function CardTitle({
+  className,
+  asChild = false,
+  ...props
+}: React.ComponentProps<"div"> & { asChild?: boolean }) {
+  const Comp = asChild ? Slot.Root : "div"
   return (
-    <div
+    <Comp
       data-slot="card-title"
       className={cn(
         "font-heading text-base leading-snug font-medium group-data-[size=sm]/card:text-sm",

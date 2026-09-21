@@ -9,7 +9,6 @@ import { ArrowLeftIcon, ClockIcon, LoaderCircleIcon, SparklesIcon, ShoppingBagIc
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -326,9 +325,11 @@ export default function SeatsPage() {
       {hasHold && (
         <Card className={tooLateToPay ? "border-destructive" : "border-primary"}>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <ClockIcon className="size-4" />
-              Held for {formatCountdown(secondsLeft)}
+            <CardTitle asChild className="flex items-center gap-2 text-base">
+              <h2>
+                <ClockIcon className="size-4" />
+                Held for {formatCountdown(secondsLeft)}
+              </h2>
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
@@ -352,8 +353,8 @@ export default function SeatsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">
-            {selected.size === 0 ? "No seats selected" : `${selected.size} seat${selected.size === 1 ? "" : "s"}`}
+          <CardTitle asChild className="text-base">
+            <h2>{selected.size === 0 ? "No seats selected" : `${selected.size} seat${selected.size === 1 ? "" : "s"}`}</h2>
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -415,34 +416,50 @@ export default function SeatsPage() {
             </Button>
           )}
 
-          <p className="text-xs text-muted-foreground">
-            <Badge variant="secondary" className="mr-1">
-              {availability?.available?.toLocaleString("en-IN") ?? "—"}
-            </Badge>
-            seats free right now
-          </p>
         </CardContent>
       </Card>
     </div>
   )
 
   return (
-    <div className="flex flex-col gap-6 pb-24 lg:pb-0">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button variant="ghost" size="sm" className="px-0" asChild>
-          <Link href={`/events/${eventId}`}>
-            <ArrowLeftIcon className="size-4" />
-            {event?.title ?? "Back to event"}
-          </Link>
-        </Button>
-        <BookingSteps current={1} />
+    <div className="flex flex-col gap-6 pb-24">
+      {/*
+        The page had no heading at all — its only h-tags were the footer's — and
+        the event title lived inside a ghost back-button, so nothing said where
+        you were. The title is the h1 now; the back link is just a back link.
+        The seat count moves up here too: it is the number that decides whether
+        to keep looking, and it was 12px of muted text at the foot of a sidebar.
+      */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Button variant="ghost" size="sm" asChild>
+            <Link href={`/events/${eventId}`}>
+              <ArrowLeftIcon className="size-4" />
+              Back to event
+            </Link>
+          </Button>
+          <BookingSteps current={1} />
+        </div>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">{event?.title ?? "Choose your seats"}</h1>
+          {availability !== undefined && (
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground tabular-nums">
+                {availability.available.toLocaleString("en-IN")}
+              </span>{" "}
+              seats free right now
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <Card>
           <CardHeader className="gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle>Choose your seats</CardTitle>
+              <CardTitle asChild>
+                <h2>Choose your seats</h2>
+              </CardTitle>
               {event !== undefined && event.tiers.length > 1 && (
                 <ToggleGroup
                   type="single"
@@ -462,9 +479,14 @@ export default function SeatsPage() {
             </div>
             <SeatmapLegend tiers={event?.tiers ?? []} />
 
-            {/* "Best available" — N together, nearest the stage */}
+            {/*
+              "Best available" — N seats together, nearest the stage.
+              A plain row of secondary controls: bordered and filled, this utility
+              outweighed the tier filter above it, which is the primary way into
+              the map.
+            */}
             {!hasHold && (
-              <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-2 text-sm">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
                 <SparklesIcon className="size-4 text-muted-foreground" />
                 <span className="text-muted-foreground">Best available:</span>
                 <NativeSelect value={String(bestCount)} onChange={(e) => setBestCount(Number(e.target.value))} className="w-24">
@@ -474,7 +496,7 @@ export default function SeatsPage() {
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
-                <Button type="button" size="sm" variant="secondary" onClick={pickBest} disabled={seatsLoading || busy}>
+                <Button type="button" size="sm" variant="outline" onClick={pickBest} disabled={seatsLoading || busy}>
                   Pick for me
                 </Button>
               </div>
@@ -528,9 +550,23 @@ export default function SeatsPage() {
         <div className="hidden lg:sticky lg:top-20 lg:block lg:h-fit">{basket}</div>
       </div>
 
-      {/* Mobile: a fixed bar with the essentials, and a drawer for the rest. */}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 p-3 backdrop-blur lg:hidden">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+      {/*
+        The action bar, at every width — not just on phones.
+        The sticky sidebar puts "Hold seats" ~700px from the seat being clicked
+        on a large display: 556px up and 427px across. A bar pinned to the
+        bottom keeps the confirmation next to the selection wherever the pointer
+        is. It appears only once there is something to act on, so an untouched
+        map is not covered by a disabled button.
+      */}
+      {(selected.size > 0 || hasHold) && (
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 p-3 backdrop-blur">
+        {/*
+          A centred cluster, not a justify-between row. Pushed to the far right
+          the button was 548px across from a seat in the middle of the map —
+          further than the sidebar it replaced. Centred, the action sits under
+          the map it belongs to.
+        */}
+        <div className="mx-auto flex w-fit items-center gap-4">
           <div className="flex flex-col">
             <span className="text-sm font-medium">
               {hasHold ? `Held · ${formatCountdown(secondsLeft)}` : `${selected.size} seat${selected.size === 1 ? "" : "s"}`}
@@ -553,16 +589,17 @@ export default function SeatsPage() {
             </DrawerContent>
           </Drawer>
           {hasHold ? (
-            <Button size="sm" disabled={busy || tooLateToPay} onClick={() => void onCheckout()}>
-              Pay
+            <Button size="lg" disabled={busy || tooLateToPay} onClick={() => void onCheckout()}>
+              Pay {formatPaise(selectedTotal)}
             </Button>
           ) : (
-            <Button size="sm" disabled={selected.size === 0 || busy} onClick={() => void onHold()}>
-              Hold
+            <Button size="lg" disabled={busy} onClick={() => void onHold()}>
+              Hold {selected.size} seat{selected.size === 1 ? "" : "s"}
             </Button>
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }

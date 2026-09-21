@@ -4,6 +4,7 @@ import * as React from "react"
 import { MaximizeIcon, MinusIcon, PlusIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { cn } from "cn"
 
 const MIN = 0.5
 const MAX = 4
@@ -63,11 +64,17 @@ export function SeatmapViewport({
   }
 
   return (
-    <div className={className}>
-      <div className="mb-2 flex items-center justify-end gap-1">
+    /*
+     * The controls sit INSIDE the map's bordered box, as its toolbar.
+     * Floating above it in their own row, they read as a stray cluster between
+     * the filters and the map — anchored to the thing they control, they do not.
+     */
+    <div className={cn("overflow-hidden rounded-md border bg-muted/30", className)}>
+      <div className="flex items-center justify-end gap-1 border-b bg-background/60 px-2 py-1.5">
+        <span className="mr-auto text-xs text-muted-foreground">Drag to pan · ⌘/ctrl + scroll to zoom</span>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button type="button" variant="outline" size="icon" aria-label="Zoom out" onClick={() => zoomBy(0.8)}>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="Zoom out" onClick={() => zoomBy(0.8)}>
               <MinusIcon className="size-4" />
             </Button>
           </TooltipTrigger>
@@ -76,7 +83,7 @@ export function SeatmapViewport({
         <span className="w-12 text-center text-xs tabular-nums text-muted-foreground">{Math.round(view.scale * 100)}%</span>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button type="button" variant="outline" size="icon" aria-label="Zoom in" onClick={() => zoomBy(1.25)}>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="Zoom in" onClick={() => zoomBy(1.25)}>
               <PlusIcon className="size-4" />
             </Button>
           </TooltipTrigger>
@@ -84,16 +91,16 @@ export function SeatmapViewport({
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button type="button" variant="outline" size="icon" aria-label="Reset view" onClick={() => setView({ scale: 1, x: 0, y: 0 })}>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="Reset view" onClick={() => setView({ scale: 1, x: 0, y: 0 })}>
               <MaximizeIcon className="size-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Reset · drag to pan · ⌘/ctrl + scroll to zoom</TooltipContent>
+          <TooltipContent>Reset view</TooltipContent>
         </Tooltip>
       </div>
 
       <div
-        className="relative h-[560px] cursor-grab touch-none overflow-hidden rounded-md border bg-muted/30 active:cursor-grabbing"
+        className="relative h-[520px] cursor-grab touch-none overflow-hidden active:cursor-grabbing"
         onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
