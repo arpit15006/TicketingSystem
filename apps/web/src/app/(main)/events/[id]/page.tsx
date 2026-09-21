@@ -63,12 +63,24 @@ export default function EventDetailPage() {
   if (isLoading || event === undefined) {
     return (
       <div className="flex flex-col gap-6">
-        <Skeleton className="h-64 w-full rounded-2xl" />
+        <Skeleton className="h-64 w-full rounded-xl" />
         <Skeleton className="h-8 w-2/3" />
         <Skeleton className="h-72 w-full rounded-xl" />
       </div>
     )
   }
+
+  /*
+   * The Sections column earns its place only when it says something the Tier
+   * column does not. A seatmap where each tier is one identically-named section
+   * — Stalls → STALLS — otherwise prints every name twice in different case,
+   * which is noise, not information.
+   */
+  const sectionsFor = (tierId: string) => event.sections.filter((s) => s.tier_id === tierId)
+  const showSections = event.tiers.some((tier) => {
+    const names = sectionsFor(tier.tier_id).map((s) => s.name)
+    return names.length > 1 || (names[0] !== undefined && names[0].toLowerCase() !== tier.name.toLowerCase())
+  })
 
   const onsale = event.status === "onsale"
   const seatsLeft = availability?.available
@@ -95,7 +107,7 @@ export default function EventDetailPage() {
       </div>
 
       {/* ── poster band ──────────────────────────────────────────────────── */}
-      <div className="relative h-64 overflow-hidden rounded-2xl md:h-80">
+      <div className="relative h-64 overflow-hidden rounded-xl md:h-80">
         <EventPoster event={event} className="absolute inset-0" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
         <div className="relative flex h-full flex-col justify-end gap-3 p-6 text-white md:p-8">
@@ -140,6 +152,18 @@ export default function EventDetailPage() {
             <h2 className="text-lg font-semibold">Tickets</h2>
             <Card>
               <CardContent className="pt-0">
+                {/*
+                  The price used to be right-aligned across a full-width table, so
+                  it sat ~360px from its own tier and a row had to be tracked
+                  across empty space to be read.
+                  Sizing the table to its content fixed that but left a small
+                  orphaned block in a wide card, with rules that stopped short.
+                  Instead the table still spans the card — so the row rules do too
+                  — and the price column absorbs the slack with `w-full`. The
+                  label columns then hug their content and the price begins
+                  immediately after them. `tabular-nums` keeps the figures
+                  aligned with each other down the column.
+                */}
                 {event.tiers.length === 0 ? (
                   <p className="py-4 text-sm text-muted-foreground">No pricing tiers yet.</p>
                 ) : (
@@ -147,20 +171,22 @@ export default function EventDetailPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Tier</TableHead>
-                        <TableHead>Sections</TableHead>
-                        <TableHead className="text-right">Price</TableHead>
+                        {showSections && <TableHead>Sections</TableHead>}
+                        <TableHead className="w-full">Price</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {event.tiers.map((tier) => {
-                        const sections = event.sections.filter((s) => s.tier_id === tier.tier_id)
+                        const sections = sectionsFor(tier.tier_id)
                         return (
                           <TableRow key={tier.tier_id}>
                             <TableCell className="font-medium">{tier.name}</TableCell>
-                            <TableCell className="text-muted-foreground">
-                              {sections.length === 0 ? "—" : sections.map((s) => s.name).join(", ")}
-                            </TableCell>
-                            <TableCell className="text-right font-medium tabular-nums">
+                            {showSections && (
+                              <TableCell className="text-muted-foreground">
+                                {sections.length === 0 ? "—" : sections.map((s) => s.name).join(", ")}
+                              </TableCell>
+                            )}
+                            <TableCell className="font-medium tabular-nums">
                               {formatPaise(tier.price_paise)}
                             </TableCell>
                           </TableRow>
