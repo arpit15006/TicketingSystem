@@ -64,10 +64,23 @@ function hash(input: string): number {
   return h >>> 0
 }
 
+/**
+ * Tailwind gradient classes for a category you already know, picked
+ * deterministically from `seed`.
+ *
+ * Callers that hold a Category must use this rather than round-tripping through
+ * `posterGradient(x, category)`: the keyword rules match event *titles*, and
+ * several category names do not match their own rule — `categoryOf("sports")`
+ * is "other", so a sports tile would render the grey fallback.
+ */
+export function categoryGradient(category: Category, seed: string): string {
+  const options = GRADIENTS[category]
+  return `bg-gradient-to-br ${options[hash(seed) % options.length]}`
+}
+
 /** Tailwind gradient classes, chosen deterministically from the event id. */
 export function posterGradient(eventId: string, title: string): string {
-  const options = GRADIENTS[categoryOf(title)]
-  return `bg-gradient-to-br ${options[hash(eventId) % options.length]}`
+  return categoryGradient(categoryOf(title), eventId)
 }
 
 /** Two initials for the poster monogram — "Arijit Singh" → "AS". */

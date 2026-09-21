@@ -94,12 +94,20 @@ export default function EventDetailPage() {
         <BreadcrumbList>
           <BreadcrumbItem>
             <BreadcrumbLink asChild>
-              <Link href="/">Events</Link>
+              <Link href="/events">Events</Link>
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbPage>{CATEGORY_LABEL[categoryOf(event.title)]}</BreadcrumbPage>
+            <BreadcrumbLink asChild>
+              <Link href={`/events?category=${categoryOf(event.title)}`}>
+                {CATEGORY_LABEL[categoryOf(event.title)]}
+              </Link>
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbPage className="max-w-40 truncate sm:max-w-none">{event.title}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
@@ -253,8 +261,8 @@ export default function EventDetailPage() {
               <CardTitle className="flex items-baseline gap-2">
                 {cheapest !== null ? (
                   <>
-                    <span className="text-sm font-normal text-muted-foreground">from</span>
                     <span className="text-2xl tabular-nums">{formatPaise(cheapest)}</span>
+                    <span className="text-sm font-normal text-muted-foreground">onwards</span>
                   </>
                 ) : (
                   <span className="text-lg">Pricing soon</span>

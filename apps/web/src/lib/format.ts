@@ -50,6 +50,29 @@ export function formatShortDate(iso: string): string {
   })
 }
 
+/**
+ * `Sun, 19 Oct, 6:00 PM` — the listing card's date line, which leads the card.
+ *
+ * `en-IN` already produces this shape; only the day period comes back lowercase,
+ * so it is rebuilt from parts rather than regex-cased. A naive `.toUpperCase()`
+ * on the whole string would shout the month too, and an `/am|pm/` replace would
+ * also hit the "am" inside a month or weekday name in other locales.
+ */
+export function formatCardDateTime(iso: string): string {
+  const parts = new Intl.DateTimeFormat("en-IN", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(new Date(iso))
+
+  return parts
+    .map((part) => (part.type === "dayPeriod" ? part.value.toUpperCase() : part.value))
+    .join("")
+}
+
 /** `mm:ss`, for the hold countdown. */
 export function formatCountdown(totalSeconds: number): string {
   const safe = Math.max(0, Math.floor(totalSeconds))

@@ -58,7 +58,7 @@ export default function OrderPage() {
     )
   }
   if (isLoading || order === undefined) {
-    return <Skeleton className="mx-auto h-96 w-full max-w-2xl rounded-xl" />
+    return <Skeleton className="mx-auto h-96 w-full max-w-3xl rounded-xl" />
   }
 
   const confirmed = order.status === "confirmed"
@@ -71,9 +71,20 @@ export default function OrderPage() {
         gradient hero the print engine drops, chrome, controls — so on paper it
         steps aside and <PrintableTicket> takes the page.
       */}
-      <div className="mx-auto flex max-w-2xl flex-col gap-6 print:hidden">
+      {/*
+        max-w-3xl, matching checkout. Step 2 and step 3 of the same flow were two
+        different column widths, so the left edge of everything the buyer was
+        reading jumped inward the moment they paid.
+      */}
+      <div className="mx-auto flex max-w-3xl flex-col gap-6 print:hidden">
         {confirmed && <BookingSteps current={3} />}
-        <div className="flex items-center justify-between gap-4">
+        {/*
+          The badge reads as a qualifier on the heading, so it sits against it
+          rather than across the page. `aria-live` because this page polls: a
+          settling order becomes confirmed under the reader's hands, and the
+          only thing that changes is this line.
+        */}
+        <div className="flex flex-wrap items-center gap-3" aria-live="polite">
           <h1 className="text-2xl font-semibold tracking-tight">
             {confirmed ? "You're going!" : compensated ? "Seat lost" : "Your order"}
           </h1>
@@ -170,7 +181,13 @@ export default function OrderPage() {
                   <AlertDescription>One code per seat. Each admits exactly once.</AlertDescription>
                 </Alert>
 
-                <div className="grid gap-4 sm:grid-cols-2">
+                {/*
+                  Centred wrap, not a fixed column count: a QR card is as wide as
+                  the code inside it, so the row fills to whatever fits and a last
+                  row that cannot fill stays centred. Three seats in a two-column
+                  grid left the third stranded beside a hole.
+                */}
+                <div className="flex flex-wrap justify-center gap-4">
                   {order.tickets.map((ticket, index) => (
                     <div key={ticket.ticket_id} className="flex flex-col items-center gap-2 rounded-lg border p-4">
                       <p className="text-xs font-medium text-muted-foreground">Ticket {index + 1}</p>
@@ -213,7 +230,12 @@ export default function OrderPage() {
             <ShareButton title={event?.title ?? "My ticket"} text="My tickets" />
           </div>
         )}
-        <Button variant="outline" className="print:hidden" asChild>
+        {/*
+          An exit, not an action. As a link it drops below the ticket's own
+          controls in weight, and `px-0` keeps its text on the same left edge as
+          the heading and the card instead of indenting it by the button padding.
+        */}
+        <Button variant="link" size="sm" className="w-fit px-0 print:hidden" asChild>
           <Link href="/">Browse more events</Link>
         </Button>
       </div>

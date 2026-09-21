@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import {
   ChevronDownIcon,
   FlaskConicalIcon,
@@ -41,8 +41,12 @@ import {
   useRefreshSession,
   useSession,
 } from "@/lib/auth"
+import { CATEGORY_LABEL, type Category } from "@/lib/poster"
 import { ALL_CITIES, useCity } from "@/lib/city"
 import { useEvents } from "@/lib/queries"
+
+/** Same order the listing page offers, so the two read as one control. */
+const CATEGORIES: Category[] = ["music", "comedy", "sports", "theatre", "festival"]
 
 function initials(name: string): string {
   return name
@@ -83,6 +87,32 @@ function CityPicker() {
   )
 }
 
+/**
+ * The persistent category strip under the logo row.
+ *
+ * Marked active by pathname only. Reading `?category=` here with
+ * `useSearchParams` would opt every page under `(main)` out of static rendering,
+ * because this header sits in that layout — the same bailout the login page
+ * documents. A category link that is merely not-bold is a fair trade for that.
+ */
+function CategoryNav() {
+  const pathname = usePathname()
+  const onListing = pathname === "/events"
+
+  return (
+    <nav aria-label="Browse by category" className="flex items-center gap-1">
+      <Button variant="ghost" size="sm" className={onListing ? "font-semibold" : undefined} asChild>
+        <Link href="/events">All events</Link>
+      </Button>
+      {CATEGORIES.map((c) => (
+        <Button key={c} variant="ghost" size="sm" asChild>
+          <Link href={`/events?category=${c}`}>{CATEGORY_LABEL[c]}</Link>
+        </Button>
+      ))}
+    </nav>
+  )
+}
+
 export function SiteHeader() {
   const { user, isLoading, isAuthenticated } = useSession()
   const refreshSession = useRefreshSession()
@@ -120,19 +150,15 @@ export function SiteHeader() {
           <CityPicker />
         </div>
 
-        <nav className="ml-auto hidden items-center gap-2 md:flex lg:gap-3">
+        {/* Search gets the header's spare width instead of hiding behind a magnifier. */}
+        <div className="mx-2 hidden flex-1 md:block lg:mx-4">
           <SearchCommand />
-          {links.map((l) => (
-            <Button key={l.href} variant="ghost" size="sm" asChild>
-              <Link href={l.href}>
-                <l.icon className="size-4" />
-                <span className="hidden lg:inline">{l.label}</span>
-              </Link>
-            </Button>
-          ))}
+        </div>
+
+        <div className="hidden items-center gap-1 md:flex">
           <NotificationsBell />
           <ThemeToggle />
-        </nav>
+        </div>
 
         <div className="ml-auto flex items-center gap-1 md:ml-0">
           <div className="md:hidden">
@@ -203,8 +229,13 @@ export function SiteHeader() {
                 <CityPicker />
                 <Separator className="my-2" />
                 <Button variant="ghost" className="justify-start" asChild>
-                  <Link href="/">All events</Link>
+                  <Link href="/events">All events</Link>
                 </Button>
+                {CATEGORIES.map((c) => (
+                  <Button key={c} variant="ghost" className="justify-start" asChild>
+                    <Link href={`/events?category=${c}`}>{CATEGORY_LABEL[c]}</Link>
+                  </Button>
+                ))}
                 {links.map((l) => (
                   <Button key={l.href} variant="ghost" className="justify-start" asChild>
                     <Link href={l.href}>
@@ -231,6 +262,27 @@ export function SiteHeader() {
               </div>
             </SheetContent>
           </Sheet>
+        </div>
+      </div>
+
+      {/*
+        Row two. Categories scroll horizontally rather than wrapping, so the strip
+        stays one line deep at every width instead of pushing the page down on a
+        phone.
+      */}
+      <div className="hidden border-t sm:block">
+        <div className="mx-auto flex h-11 w-full max-w-6xl items-center gap-2 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <CategoryNav />
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {links.map((l) => (
+              <Button key={l.href} variant="ghost" size="sm" asChild>
+                <Link href={l.href}>
+                  <l.icon className="size-4" />
+                  <span className="hidden lg:inline">{l.label}</span>
+                </Link>
+              </Button>
+            ))}
+          </div>
         </div>
       </div>
     </header>

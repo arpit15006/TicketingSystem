@@ -48,12 +48,12 @@ export function SearchCommand() {
       <Button
         variant="outline"
         size="sm"
-        className="hidden w-56 justify-between md:flex"
+        className="hidden h-9 w-full justify-between md:flex"
         onClick={() => setOpen(true)}
       >
         <span className="flex items-center gap-2">
           <SearchIcon className="size-3.5" />
-          Search events
+          Search events, artists, venues
         </span>
         <KbdGroup>
           <Kbd>⌘</Kbd>
