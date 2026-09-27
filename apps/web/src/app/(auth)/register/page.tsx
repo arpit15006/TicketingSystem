@@ -3,40 +3,38 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useForm } from "react-hook-form"
+import { useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
+import { CheckIcon, EyeIcon, EyeOffIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Spinner } from "@/components/ui/spinner"
 import { ApiError } from "@/lib/api"
 import { register as registerUser, useRefreshSession } from "@/lib/auth"
 import { registerSchema, type RegisterValues } from "@/lib/schemas"
+import { DemoAccounts } from "../demo-accounts"
+import { cn } from "cn"
+
+const MIN_PASSWORD = 12
 
 export default function RegisterPage() {
   const router = useRouter()
   const refreshSession = useRefreshSession()
   const [failure, setFailure] = React.useState<ApiError | null>(null)
+  const [revealed, setRevealed] = React.useState(false)
 
   const form = useForm<RegisterValues>({
     resolver: zodResolver(registerSchema),
     defaultValues: { fullName: "", email: "", password: "" },
   })
+
+  // `useWatch` rather than `form.watch`: the latter hands back a function the
+  // React Compiler cannot memoize, so it bails out of optimising this whole
+  // component for the sake of one character count.
+  const password = useWatch({ control: form.control, name: "password" })
+  const longEnough = password.length >= MIN_PASSWORD
 
   const onSubmit = async (values: RegisterValues): Promise<void> => {
     setFailure(null)
@@ -60,68 +58,91 @@ export default function RegisterPage() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Create an account</CardTitle>
-        <CardDescription>You need one before you can hold a seat.</CardDescription>
-      </CardHeader>
+    <div className="flex flex-col gap-7">
+      <header className="flex flex-col gap-2">
+        <h1 className="text-3xl font-semibold">Create an account</h1>
+        <p className="text-sm text-muted-foreground">You need one before you can hold a seat.</p>
+      </header>
 
-      <form onSubmit={form.handleSubmit(onSubmit)} noValidate>
-        <CardContent className="flex flex-col gap-6">
-          {failure !== null && (
-            <Alert variant="destructive" className="mb-6">
-              <AlertTitle>{failure.message}</AlertTitle>
-              <AlertDescription>
-                <span className="font-mono text-xs">{failure.requestId}</span>
-              </AlertDescription>
-            </Alert>
-          )}
+      {failure !== null && (
+        <Alert variant="destructive">
+          <AlertTitle>{failure.message}</AlertTitle>
+          <AlertDescription>
+            <span className="font-mono text-xs">{failure.requestId}</span>
+          </AlertDescription>
+        </Alert>
+      )}
 
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="fullName">Full name</FieldLabel>
-              <Input size="lg" id="fullName" autoComplete="name" {...form.register("fullName")} />
-              <FieldError errors={[form.formState.errors.fullName]} />
-            </Field>
+      <form onSubmit={form.handleSubmit(onSubmit)} noValidate className="flex flex-col gap-6">
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="fullName">Full name</FieldLabel>
+            <Input size="lg" id="fullName" autoComplete="name" {...form.register("fullName")} />
+            <FieldError errors={[form.formState.errors.fullName]} />
+          </Field>
 
-            <Field>
-              <FieldLabel htmlFor="email">Email</FieldLabel>
-              <Input size="lg"
-                id="email"
-                type="email"
-                autoComplete="email"
-                {...form.register("email")}
-              />
-              <FieldError errors={[form.formState.errors.email]} />
-            </Field>
+          <Field>
+            <FieldLabel htmlFor="email">Email</FieldLabel>
+            <Input size="lg" id="email" type="email" autoComplete="email" {...form.register("email")} />
+            <FieldError errors={[form.formState.errors.email]} />
+          </Field>
 
-            <Field>
-              <FieldLabel htmlFor="password">Password</FieldLabel>
-              <Input size="lg"
+          <Field>
+            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <div className="relative">
+              <Input
+                size="lg"
                 id="password"
-                type="password"
+                type={revealed ? "text" : "password"}
                 autoComplete="new-password"
+                className="pr-10"
+                aria-describedby="password-rule"
                 {...form.register("password")}
               />
-              <FieldDescription>At least 12 characters.</FieldDescription>
-              <FieldError errors={[form.formState.errors.password]} />
-            </Field>
-          </FieldGroup>
-          <Button type="submit" size="lg" className="w-full font-semibold" disabled={form.formState.isSubmitting}>
-            {form.formState.isSubmitting && <Spinner />}
-            Create account
-          </Button>
-        </CardContent>
+              <button
+                type="button"
+                onClick={() => setRevealed((r) => !r)}
+                aria-label={revealed ? "Hide password" : "Show password"}
+                aria-pressed={revealed}
+                className="press absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                {revealed ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
+              </button>
+            </div>
+            {/*
+              The rule is stated up front and then confirms itself as it is met,
+              rather than waiting for submit to say no — the requirement is
+              known, so failing it should never be a surprise.
+            */}
+            <p
+              id="password-rule"
+              className={cn(
+                "flex items-center gap-1.5 text-xs transition-colors",
+                longEnough ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
+              )}
+            >
+              <CheckIcon className={cn("size-3.5 transition-opacity", longEnough ? "opacity-100" : "opacity-40")} />
+              At least {MIN_PASSWORD} characters
+              {!longEnough && password.length > 0 && ` — ${MIN_PASSWORD - password.length} to go`}
+            </p>
+            <FieldError errors={[form.formState.errors.password]} />
+          </Field>
+        </FieldGroup>
 
-        <CardFooter className="mt-6">
-          <p className="text-sm text-muted-foreground">
-            Already have one?{" "}
-            <Link href="/login" className="underline underline-offset-4">
-              Sign in
-            </Link>
-          </p>
-        </CardFooter>
+        <Button type="submit" size="lg" className="w-full font-semibold" disabled={form.formState.isSubmitting}>
+          {form.formState.isSubmitting && <Spinner />}
+          Create account
+        </Button>
       </form>
-    </Card>
+
+      <DemoAccounts />
+
+      <p className="text-center text-sm text-muted-foreground">
+        Already have one?{" "}
+        <Link href="/login" className="font-medium text-foreground underline underline-offset-4">
+          Sign in
+        </Link>
+      </p>
+    </div>
   )
 }

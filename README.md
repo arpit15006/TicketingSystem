@@ -532,6 +532,18 @@ first real payment fails with "Authentication failed" from Razorpay.
 | `scanner` | `scanner@demo.test` | scoped to seven events; refused on any other |
 | `attendee` | `attendee@demo.test` | hold → pay → ticket |
 
+The sign-in page offers each of these as a one-press demo, landing on the work that role actually
+does — the scanner opens the gate, the organizer their dashboard. The exchange happens in
+`/api/demo-login` on the Next server, so no demo passphrase is ever shipped in the client bundle;
+the page posts a role name and receives the same token pair the form would have produced.
+
+Two variables in `apps/web/.env.local` control it. `DEMO_LOGINS=0` removes the buttons entirely.
+The `platform_admin` row is opt-in and appears only when `DEMO_ADMIN_EMAIL` and
+`DEMO_ADMIN_PASSWORD` are both set — that account can grant roles and read across every organizer,
+so a real deployment leaves them unset and the route refuses the role with a 404. They deliberately
+do not read `BOOTSTRAP_ADMIN_*`: those belong to the seed script and identity service, which run in
+a different process with a different env file, so a check against them would have always passed.
+
 The storefront (`pnpm dev:web`, http://localhost:3007) covers the whole journey: browse by city and
 category, seatmap with zoom and "best available", hold with a live countdown, Razorpay checkout,
 QR tickets under **My bookings**, an in-app inbox for what the platform would have emailed, an
