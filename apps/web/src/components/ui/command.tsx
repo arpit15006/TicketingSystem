@@ -68,7 +68,14 @@ function CommandDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        {children}
+        {/*
+          The <Command> root, which the generated component left out.
+          Everything below it — the input, the list, each item — reads cmdk's
+          store from this provider. Without it they resolve an undefined
+          context and the first one to mount throws on `.subscribe`, so the
+          whole palette failed the instant it was opened.
+        */}
+        <Command>{children}</Command>
       </DialogContent>
     </Dialog>
   )

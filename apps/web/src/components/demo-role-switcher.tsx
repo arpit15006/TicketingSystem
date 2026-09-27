@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -51,34 +52,36 @@ export function DemoRoleSwitcher({ className }: { className?: string }) {
           </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {accounts.map((account) => {
-          const Icon = DEMO_ICONS[account.role] ?? TicketIcon
-          const active = current?.role === account.role
-          return (
-            <DropdownMenuItem
-              key={account.role}
-              disabled={busy !== null}
-              onSelect={(event) => {
-                // The menu closes on select; without this the navigation races
-                // the close animation and the page changes under a moving menu.
-                event.preventDefault()
-                void signIn(account)
-              }}
-              className="gap-2.5"
-            >
-              {busy === account.role ? (
-                <Spinner className="size-4 shrink-0" />
-              ) : (
-                <Icon className="size-4 shrink-0" />
-              )}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{account.label}</span>
-                <span className="block truncate text-xs text-muted-foreground">{account.blurb}</span>
-              </span>
-              {active && <CheckIcon className="size-4 shrink-0" aria-label="Signed in as this role" />}
-            </DropdownMenuItem>
-          )
-        })}
+        <DropdownMenuGroup>
+          {accounts.map((account) => {
+            const Icon = DEMO_ICONS[account.role] ?? TicketIcon
+            const active = current?.role === account.role
+            return (
+              <DropdownMenuItem
+                key={account.role}
+                disabled={busy !== null}
+                onSelect={(event) => {
+                  // The menu closes on select; without this the navigation races
+                  // the close animation and the page changes under a moving menu.
+                  event.preventDefault()
+                  void signIn(account)
+                }}
+                className="gap-2.5"
+              >
+                {busy === account.role ? (
+                  <Spinner className="size-4 shrink-0" />
+                ) : (
+                  <Icon className="size-4 shrink-0" />
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{account.label}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{account.blurb}</span>
+                </span>
+                {active && <CheckIcon className="size-4 shrink-0" aria-label="Signed in as this role" />}
+              </DropdownMenuItem>
+            )
+          })}
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   )

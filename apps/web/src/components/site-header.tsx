@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
@@ -62,7 +63,9 @@ function initials(name: string): string {
 function CityPicker() {
   const [city, setCity] = useCity()
   const { data: events } = useEvents()
-  const cities = [...new Set((events ?? []).map((e) => e.venue_city))].sort()
+  const counts = new Map<string, number>()
+  for (const e of events ?? []) counts.set(e.venue_city, (counts.get(e.venue_city) ?? 0) + 1)
+  const cities = [...counts.keys()].sort()
 
   return (
     <DropdownMenu>
@@ -75,11 +78,16 @@ function CityPicker() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-48">
         <DropdownMenuLabel>Your city</DropdownMenuLabel>
+        <DropdownMenuSeparator />
         <DropdownMenuRadioGroup value={city} onValueChange={setCity}>
-          <DropdownMenuRadioItem value={ALL_CITIES}>All cities</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value={ALL_CITIES}>
+            <span className="flex-1">All cities</span>
+            <span className="text-xs tabular-nums text-muted-foreground">{events?.length ?? 0}</span>
+          </DropdownMenuRadioItem>
           {cities.map((c) => (
             <DropdownMenuRadioItem key={c} value={c}>
-              {c}
+              <span className="flex-1 truncate">{c}</span>
+              <span className="text-xs tabular-nums text-muted-foreground">{counts.get(c) ?? 0}</span>
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
@@ -185,23 +193,27 @@ export function SiteHeader() {
                   <span className="text-xs font-normal text-muted-foreground">{user.email}</span>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link href="/bookings">
-                    <TicketsIcon className="size-4" />
-                    My bookings
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/account">
-                    <UserIcon className="size-4" />
-                    Account
-                  </Link>
-                </DropdownMenuItem>
+                <DropdownMenuGroup>
+                  <DropdownMenuItem asChild>
+                    <Link href="/bookings">
+                      <TicketsIcon className="size-4" />
+                      My bookings
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href="/account">
+                      <UserIcon className="size-4" />
+                      Account
+                    </Link>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => void onLogout()}>
-                  <LogOutIcon className="size-4" />
-                  Sign out
-                </DropdownMenuItem>
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onSelect={() => void onLogout()}>
+                    <LogOutIcon className="size-4" />
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (

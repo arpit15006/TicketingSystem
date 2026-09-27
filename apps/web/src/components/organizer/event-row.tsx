@@ -13,8 +13,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuGroup,
   DropdownMenuLabel,
+  DropdownMenuPortal,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -53,6 +58,12 @@ export function EventRow({ event, onSales }: { event: EventSummary; onSales: (id
 
   const noInventory = sales.error?.status === 404
   const forbidden = sales.error?.status === 403
+
+  // The three things this menu can do to the event, named once so the group
+  // and its submenu agree about when they have anything to show.
+  const canProvision = noInventory && event.status !== "draft"
+  const canPublish = event.status === "draft"
+  const canPutOnSale = event.status !== "onsale"
 
   const publish = useMutation({
     mutationFn: async (onsale: boolean) =>
@@ -145,37 +156,70 @@ export function EventRow({ event, onSales }: { event: EventSummary; onSales: (id
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuLabel>{event.title}</DropdownMenuLabel>
+            <DropdownMenuLabel className="truncate">{event.title}</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link href={`/organizer/events/${event.event_id}`}>
-                <ArmchairIcon className="size-4" />
-                Manage
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href={`/events/${event.event_id}`}>
-                <ExternalLinkIcon className="size-4" />
-                View event page
-              </Link>
-            </DropdownMenuItem>
-            {noInventory && event.status !== "draft" && (
-              <DropdownMenuItem onSelect={() => provision.mutate()} disabled={provision.isPending}>
-                <ArmchairIcon className="size-4" />
-                Provision seats
+
+            {/* Going somewhere. */}
+            <DropdownMenuGroup>
+              <DropdownMenuItem asChild>
+                <Link href={`/organizer/events/${event.event_id}`}>
+                  <ArmchairIcon className="size-4" />
+                  Manage
+                </Link>
               </DropdownMenuItem>
-            )}
-            {event.status === "draft" && (
-              <DropdownMenuItem onSelect={() => setConfirm("published")}>
-                <UploadIcon className="size-4" />
-                Publish (not on sale)
+              <DropdownMenuItem asChild>
+                <Link href={`/events/${event.event_id}`}>
+                  <ExternalLinkIcon className="size-4" />
+                  View event page
+                </Link>
               </DropdownMenuItem>
-            )}
-            {event.status !== "onsale" && (
-              <DropdownMenuItem onSelect={() => setConfirm("onsale")}>
-                <RocketIcon className="size-4" />
-                Put on sale
-              </DropdownMenuItem>
+            </DropdownMenuGroup>
+
+            {/*
+              Changing the event. These alter what buyers can do, so they are
+              separated from the two that only navigate — and the status moves
+              live one level in, under a name that says what they are, rather
+              than sitting flat beside "Manage" where they read as peers.
+            */}
+            {(canProvision || canPublish || canPutOnSale) && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                    Change this event
+                  </DropdownMenuLabel>
+                  {canProvision && (
+                    <DropdownMenuItem onSelect={() => provision.mutate()} disabled={provision.isPending}>
+                      <ArmchairIcon className="size-4" />
+                      Provision seats
+                    </DropdownMenuItem>
+                  )}
+                  {(canPublish || canPutOnSale) && (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <RocketIcon className="size-4" />
+                        Status
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuPortal>
+                        <DropdownMenuSubContent>
+                          {canPublish && (
+                            <DropdownMenuItem onSelect={() => setConfirm("published")}>
+                              <UploadIcon className="size-4" />
+                              Publish (not on sale)
+                            </DropdownMenuItem>
+                          )}
+                          {canPutOnSale && (
+                            <DropdownMenuItem onSelect={() => setConfirm("onsale")}>
+                              <RocketIcon className="size-4" />
+                              Put on sale
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuPortal>
+                    </DropdownMenuSub>
+                  )}
+                </DropdownMenuGroup>
+              </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
