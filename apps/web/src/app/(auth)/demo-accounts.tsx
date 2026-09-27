@@ -1,35 +1,10 @@
 "use client"
 
-import * as React from "react"
-import { useRouter } from "next/navigation"
-import {
-  ChevronRightIcon,
-  LayoutDashboardIcon,
-  ScanLineIcon,
-  ShieldCheckIcon,
-  TicketIcon,
-  type LucideIcon,
-} from "lucide-react"
+import { ChevronRightIcon, TicketIcon } from "lucide-react"
 import { Alert, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import { useRefreshSession } from "@/lib/auth"
-import { storeTokens } from "@/lib/tokens"
-
-interface DemoAccount {
-  role: string
-  label: string
-  blurb: string
-  email: string
-  landing: string
-}
-
-const ICONS: Record<string, LucideIcon> = {
-  attendee: TicketIcon,
-  organizer: LayoutDashboardIcon,
-  scanner: ScanLineIcon,
-  platform_admin: ShieldCheckIcon,
-}
+import { DEMO_ICONS, useDemoAccounts, useDemoSignIn } from "@/lib/demo"
 
 /**
  * The evaluator's door. Four seeded accounts, one press each.
@@ -43,56 +18,8 @@ const ICONS: Record<string, LucideIcon> = {
  * same token pair the sign-in form would have produced.
  */
 export function DemoAccounts({ onStart }: { onStart?: (() => void) | undefined } = {}) {
-  const router = useRouter()
-  const refreshSession = useRefreshSession()
-  const [accounts, setAccounts] = React.useState<DemoAccount[] | null>(null)
-  const [busy, setBusy] = React.useState<string | null>(null)
-  const [error, setError] = React.useState<string | null>(null)
-
-  React.useEffect(() => {
-    let live = true
-    void (async () => {
-      try {
-        const r = await fetch("/api/demo-login")
-        const body = (await r.json()) as { accounts?: DemoAccount[] }
-        if (live) setAccounts(body.accounts ?? [])
-      } catch {
-        if (live) setAccounts([])
-      }
-    })()
-    return () => {
-      live = false
-    }
-  }, [])
-
-  const signIn = async (account: DemoAccount): Promise<void> => {
-    setBusy(account.role)
-    setError(null)
-    onStart?.()
-    try {
-      const r = await fetch("/api/demo-login", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ role: account.role }),
-      })
-      const body = (await r.json()) as {
-        accessToken?: string
-        refreshToken?: string
-        error?: string
-      }
-      if (!r.ok || body.accessToken === undefined || body.refreshToken === undefined) {
-        setError(body.error ?? "That demo account could not sign in")
-        return
-      }
-      storeTokens({ accessToken: body.accessToken, refreshToken: body.refreshToken })
-      refreshSession()
-      router.replace(account.landing)
-    } catch {
-      setError("The demo sign-in could not be reached")
-    } finally {
-      setBusy(null)
-    }
-  }
+  const accounts = useDemoAccounts()
+  const { signIn, busy, error } = useDemoSignIn(onStart)
 
   if (accounts !== null && accounts.length === 0) return null
 
@@ -116,7 +43,7 @@ export function DemoAccounts({ onStart }: { onStart?: (() => void) | undefined }
         {accounts === null
           ? [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full rounded-lg" />)
           : accounts.map((account) => {
-              const Icon = ICONS[account.role] ?? TicketIcon
+              const Icon = DEMO_ICONS[account.role] ?? TicketIcon
               const running = busy === account.role
               return (
                 <button

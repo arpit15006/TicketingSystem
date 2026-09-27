@@ -533,7 +533,11 @@ first real payment fails with "Authentication failed" from Razorpay.
 | `attendee` | `attendee@demo.test` | hold → pay → ticket |
 
 The sign-in page offers each of these as a one-press demo, landing on the work that role actually
-does — the scanner opens the gate, the organizer their dashboard. The exchange happens in
+does — the scanner opens the gate, the organizer their dashboard. A **Demo** control in the header
+(and in the organizer workspace's own chrome) switches roles from any page without going back to
+sign-in; it ticks the account you are currently in. Because roles here are separate accounts with
+separate grants rather than a setting, switching is a real sign-out and sign-in — the old refresh
+family is revoked rather than dropped locally. The exchange happens in
 `/api/demo-login` on the Next server, so no demo passphrase is ever shipped in the client bundle;
 the page posts a role name and receives the same token pair the form would have produced.
 

@@ -24,6 +24,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { DemoRoleSwitcher } from "@/components/demo-role-switcher"
 import { hasRole, isPlatformAdmin, logout, organizedEventIds, scannableEventIds, useRefreshSession, useSession } from "@/lib/auth"
 
 /**
@@ -184,7 +185,8 @@ export default function OrganizerLayout({ children }: { children: React.ReactNod
           <span className="text-sm font-medium">
             {pathname === "/organizer/new" ? "New event" : pathname.startsWith("/organizer/events/") ? "Event" : "Overview"}
           </span>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-1">
+            <DemoRoleSwitcher />
             <ThemeToggle />
           </div>
         </header>

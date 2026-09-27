@@ -31,6 +31,7 @@ import { Separator } from "@/components/ui/separator"
 import { Wordmark } from "@/components/logo"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { SearchCommand } from "@/components/search-command"
+import { DemoRoleSwitcher } from "@/components/demo-role-switcher"
 import { NotificationsBell } from "@/components/notifications-bell"
 import {
   hasRole,
@@ -156,6 +157,8 @@ export function SiteHeader() {
         </div>
 
         <div className="hidden items-center gap-1 md:flex">
+          {/* Roles are separate accounts here, so switching is a real sign-in. */}
+          <DemoRoleSwitcher />
           <NotificationsBell />
           <ThemeToggle />
         </div>
@@ -255,6 +258,10 @@ export function SiteHeader() {
                     </Button>
                   </>
                 )}
+                <div className="flex items-center justify-between pt-2 text-sm text-muted-foreground">
+                  Demo role
+                  <DemoRoleSwitcher />
+                </div>
                 <div className="flex items-center justify-between pt-2 text-sm text-muted-foreground">
                   Theme
                   <ThemeToggle />
