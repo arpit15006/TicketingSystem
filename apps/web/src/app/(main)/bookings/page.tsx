@@ -144,7 +144,7 @@ function BookingCard({ order, event }: { order: OrderSummary; event: EventSummar
   const href = order.status === "awaiting_payment" ? `/checkout/${order.orderId}` : `/orders/${order.orderId}`
 
   return (
-    <Link href={href} className="group block focus-visible:outline-none">
+    <Link href={href} className="press-sm group block focus-visible:outline-none">
       <Card className="flex flex-row overflow-hidden p-0 transition-shadow group-hover:shadow-md group-focus-visible:ring-2 group-focus-visible:ring-ring">
         <div className="relative w-28 shrink-0 sm:w-40">
           {event !== undefined ? (

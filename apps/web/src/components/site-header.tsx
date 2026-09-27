@@ -140,7 +140,7 @@ export function SiteHeader() {
   ].filter((l) => l.show)
 
   return (
-    <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur print:hidden">
+    <header className="material material-edge-bottom sticky top-0 z-50 print:hidden">
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-4">
         <Link href="/" className="shrink-0">
           <Wordmark className="text-lg" />
@@ -270,7 +270,7 @@ export function SiteHeader() {
         stays one line deep at every width instead of pushing the page down on a
         phone.
       */}
-      <div className="hidden border-t sm:block">
+      <div className="hidden sm:block">
         <div className="mx-auto flex h-11 w-full max-w-6xl items-center gap-2 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <CategoryNav />
           <div className="ml-auto flex shrink-0 items-center gap-1">

@@ -559,7 +559,7 @@ export default function SeatsPage() {
         map is not covered by a disabled button.
       */}
       {(selected.size > 0 || hasHold) && (
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 p-3 backdrop-blur">
+      <div className="material material-edge-top fixed inset-x-0 bottom-0 z-40 p-3">
         {/*
           A centred cluster, not a justify-between row. Pushed to the far right
           the button was 548px across from a seat in the middle of the map —

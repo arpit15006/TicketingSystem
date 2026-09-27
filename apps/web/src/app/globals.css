@@ -130,6 +130,186 @@
     @apply font-sans;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Apple-style foundations
+ *
+ * Three things the rest of the app builds on: type that changes shape with
+ * size, translucent chrome that content passes under, and motion that a user
+ * can interrupt. Everything here is a token or a utility so no page has to
+ * restate it.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Springs. `--ease-spring` overshoots slightly and is only for motion that
+     followed a gesture; `--ease-out-soft` is the critically damped default.
+     Durations match Apple's "response": 0.3–0.4s, not a wall-clock duration. */
+  --ease-out-soft: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.35, 0.64, 1);
+  --response-fast: 0.22s;
+  --response: 0.34s;
+
+  /* Material. A floating layer is a *thicker* surface than a chip: more blur,
+     more saturation, a brighter top edge where light catches it. */
+  --material-blur: 24px;
+  --material-saturate: 180%;
+  --material-bg: color-mix(in oklab, var(--background) 72%, transparent);
+  --material-edge: color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+@layer base {
+  /* §15 — tracking is size-specific. A single letter-spacing is wrong
+     somewhere: large text reads too loose as it grows, small text too tight.
+     Leading moves the other way — tight on display, generous on body. */
+  h1 {
+    letter-spacing: -0.021em;
+    line-height: 1.1;
+  }
+  h2 {
+    letter-spacing: -0.017em;
+    line-height: 1.2;
+  }
+  h3,
+  h4 {
+    letter-spacing: -0.011em;
+    line-height: 1.3;
+  }
+  /* Body sits at 0. Only the small, dense end gets a positive bump, where
+     letterforms otherwise collide. */
+  .text-xs,
+  .text-\[10px\] {
+    letter-spacing: 0.006em;
+  }
+
+  /* Tabular figures wherever a number is compared down a column — prices,
+     counts, countdowns — so digits do not dance as they change. */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* §12 — chrome is a material, not a painted strip. Content scrolls *under*
+     it; the edge is a soft fade where the two meet, not a 1px rule. */
+  .material {
+    background: var(--material-bg);
+    backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
+  }
+
+  /* A scroll edge effect: the boundary reads as depth rather than a border.
+     Used on sticky headers and the floating action bar. */
+  .material-edge-bottom {
+    box-shadow: 0 1px 0 0 var(--material-edge), 0 8px 24px -16px rgb(0 0 0 / 0.45);
+  }
+  .material-edge-top {
+    box-shadow: 0 -1px 0 0 var(--material-edge), 0 -8px 24px -16px rgb(0 0 0 / 0.45);
+  }
+
+  /* §1 — feedback belongs on the press, not the release, and it is instant.
+     `:active` fires on pointer-down; 100ms is below the threshold where a
+     press starts to feel reported rather than felt. */
+  .press {
+    transition: transform 100ms var(--ease-out-soft);
+  }
+  .press:active {
+    transform: scale(0.97);
+  }
+  /* Large surfaces move less — the same 3% on a card reads as a lurch. */
+  .press-sm:active {
+    transform: scale(0.99);
+  }
+
+  /* §12 — materialize, don't fade. A glass layer that is switched on at full
+     blur while its opacity ramps reads as a grey sheet appearing; blur and
+     opacity moving together read as a material thickening behind the surface
+     in front of it. Exit runs the same path in reverse (§7). */
+  .scrim {
+    background: rgb(0 0 0 / 0.14);
+  }
+  .scrim[data-state="open"],
+  .scrim[data-open]:not([data-open="false"]) {
+    animation: tk-scrim-in var(--response-fast) var(--ease-out-soft) both;
+  }
+  .scrim[data-state="closed"],
+  .scrim[data-closed]:not([data-closed="false"]) {
+    animation: tk-scrim-out var(--response-fast) var(--ease-out-soft) both;
+  }
+}
+
+@keyframes tk-scrim-in {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(5px);
+  }
+}
+@keyframes tk-scrim-out {
+  from {
+    opacity: 1;
+    backdrop-filter: blur(5px);
+  }
+  to {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+}
+
+/* ── §14 — the three accessibility signals, handled independently ──────────
+ *
+ * Reduced motion is not "no feedback": colour and opacity still respond, and
+ * a press still confirms itself. What goes is travel — slides, springs and
+ * anything that moves a large surface across the viewport.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .press:active,
+  .press-sm:active {
+    transform: none;
+    opacity: 0.82;
+  }
+}
+
+/* Frostier, not clearer: raise the background and drop the blur, so a
+   translucent layer becomes a solid one rather than a muddy one. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --material-bg: var(--background);
+    --material-blur: 0px;
+  }
+  .material {
+    backdrop-filter: none;
+  }
+  .scrim {
+    background: rgb(0 0 0 / 0.36);
+    backdrop-filter: none !important;
+  }
+}
+
+/* Near-solid surfaces with a defined edge. */
+@media (prefers-contrast: more) {
+  :root {
+    --material-bg: var(--background);
+    --material-edge: var(--foreground);
+  }
+  .material {
+    backdrop-filter: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .scrim {
+    background: rgb(0 0 0 / 0.5);
+    backdrop-filter: none !important;
+  }
+}
 /* ── the printed ticket ───────────────────────────────────────────────────────
  *
  * A sheet that exists only on paper. It is hidden on screen, and in print it is
